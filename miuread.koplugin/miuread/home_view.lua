@@ -990,7 +990,16 @@ function HomeWidget:_build_header(children, m)
                 bold=true,alignment="left",halign="left",fgcolor=Blitbuffer.COLOR_BLACK,height_overflow_show_ellipsis=true,
             })
     end
-    local wifi_value_cell=status_text(wifi_text,status_w,24,10.2)
+    local wifi_icon_w=UiScale.dp(22,19,29)
+    local wifi_gap=UiScale.dp(2,2,4)
+    local wifi_text_w=math.max(1,status_w-wifi_icon_w-wifi_gap)
+    -- SSIDs must stay on one line, including after updateHeader changes them.
+    -- TextWidget truncates by rendered width; TextBoxWidget wraps instead.
+    local wifi_value_cell=Ui.align(TextWidget:new{
+        text=wifi_text,face=face("smallinfofont",10.2,14.2),bold=true,
+        max_width=wifi_text_w,truncate_with_ellipsis=true,
+        fgcolor=Blitbuffer.COLOR_BLACK,
+    },wifi_text_w,m.header_h,"left","center")
     local bluetooth_value_cell=has_bluetooth and status_text(bluetooth_text,status_w,22,9.8) or nil
     local sync_value_cell=status_text(sync_text,status_w,22,10.0)
     local battery_target_w=has_bluetooth and status_w or status_w
@@ -1016,8 +1025,8 @@ function HomeWidget:_build_header(children, m)
     end
 
     add_status("wifi",status_w,LeftContainer:new{dimen=Geom:new{w=status_w,h=m.header_h},HorizontalGroup:new{
-        align="center",Ui.icon("wifi",UiScale.dp(22,19,29),m.header_h,UiScale.dp(18,16,24),{icon_key="wifi"}),
-        HorizontalSpan:new{width=UiScale.dp(2,2,4)},wifi_value_cell,
+        align="center",Ui.icon("wifi",wifi_icon_w,m.header_h,UiScale.dp(18,16,24),{icon_key="wifi"}),
+        HorizontalSpan:new{width=wifi_gap},wifi_value_cell,
     }},self.opts.on_quick_panel)
 
     if has_bluetooth then
