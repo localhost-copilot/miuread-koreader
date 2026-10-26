@@ -3297,7 +3297,11 @@ function Sync:upload(elapsed, callback, options)
             diagnostic_patch.report_login_session_id=login_snapshot
             diagnostic_patch.report_core_map_hash=core_hash
         end
-        self.store:save_session(book_id,diagnostic_patch)
+        -- A confirmed result commits diagnostics with its final session state
+        -- below. Keep failure/uncertain diagnostics durable before recovery.
+        local confirmed_result=value.accepted and value.uncertain~=true
+            and tostring(value.error_kind or "")~="unconfirmed"
+        if not confirmed_result then self.store:save_session(book_id,diagnostic_patch) end
 
         if value.uncertain==true or tostring(value.error_kind or "")=="unconfirmed" then
             local target_label=options.progress_only and "阅读进度" or "阅读时长"
@@ -3364,7 +3368,7 @@ function Sync:upload(elapsed, callback, options)
         self.consecutive_failures = 0
         if self.host.on_auth_channel_ok then pcall(self.host.on_auth_channel_ok,self.host,"read_report") end
         self.failure_notified = false
-        local patch={
+        local patch=U.merge(diagnostic_patch,{
             local_percent=position.progress,
             pending=nil,
             synckey=response_synckey(response) or legacy_context.synckey or session.synckey,
@@ -3379,7 +3383,7 @@ function Sync:upload(elapsed, callback, options)
             last_http_length=self.last_http_length,
             last_payload_public=public,
             book_core_map_hash=core_hash,
-        }
+        })
         if options.transactional_context~=true then
             patch.legacy_report_context=legacy_context
             patch.report_login_session_id=login_snapshot

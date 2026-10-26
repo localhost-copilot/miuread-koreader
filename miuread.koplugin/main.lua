@@ -25018,7 +25018,7 @@ function Plugin:_save_pending_progress_coordinate(book_id,position,reason)
     return true
 end
 
-function Plugin:_save_pending_progress(book_id,position,reason,sync_state)
+function Plugin:_save_pending_progress(book_id,position,reason,sync_state,sync_message)
     book_id=tostring(book_id or "")
     if book_id=="" or type(position)~="table" then return false end
     -- pending_progress and its sequence belong to one durable transaction;
@@ -25057,7 +25057,7 @@ function Plugin:_save_pending_progress(book_id,position,reason,sync_state)
     }
     if sync_state~=nil then
         pending_update.progress_sync_state=tostring(sync_state)
-        pending_update.progress_sync_message=tostring(reason or "")
+        pending_update.progress_sync_message=tostring(sync_message or reason or "")
         pending_update.progress_worker_active=sync_state=="uploading" or sync_state=="retrying"
             or sync_state=="verifying_upload" or sync_state=="finalizing"
         pending_update.progress_worker_updated_at=os.time()
@@ -25382,15 +25382,10 @@ function Plugin:_submit_progress_snapshot(book_id,position,options,callback)
             -- Keep the immutable snapshot durable after a successful write so a
             -- restart/Home recovery can VERIFY it without ever replaying it.
             snapshot.submitted_at=os.time()
-            self:_save_pending_progress(book_id,snapshot,"awaiting_cloud_confirmation","verifying_upload")
-            self.store:save_session(book_id,{
-                progress_sync_state="submitted",
-                progress_sync_message="阅读进度已提交，等待微信确认",
-                progress_upload_state="submitted",progress_submission_phase="submitted_unverified",
-                progress_upload_error=false,
-                progress_upload_submitted_at=snapshot.submitted_at,
-                progress_worker_active=false,progress_worker_updated_at=os.time(),
-            })
+            -- Persist the immutable snapshot and submitted status together,
+            -- before observers or cloud verification can run.
+            self:_save_pending_progress(book_id,snapshot,"awaiting_cloud_confirmation",
+                "submitted","阅读进度已提交，等待微信确认")
             self._home_sync_summary_cache=nil
             self._home_sync_summary_cache_at=nil
             if not accepted_notified and type(options.accepted_callback)=="function" then
