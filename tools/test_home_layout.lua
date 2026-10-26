@@ -42,7 +42,7 @@ for _, count in ipairs({0, 1, 5, 6, 7, 12, 13, 48, 49}) do
 end
 
 -- The Tools menu retains user-selected actions after removing the shortcut row.
-local tools = assert(loadstring("local Plugin = {}\n" .. method("show_home_menu") .. "\nreturn Plugin"))()
+local tools = assert(loadstring("local Plugin = {}\n" .. method("_show_home_tools_menu") .. "\nreturn Plugin"))()
 local clicked = {}
 function tools:_home_enabled() return true end
 function tools:_home_action_entries()
@@ -58,6 +58,6 @@ function tools:_show_standalone_menu(title, rows)
     assert(title == "工具")
     for _, row in ipairs(rows) do row.callback() end
 end
-tools:show_home_menu()
+tools:_show_home_tools_menu()
 for _, action in ipairs({"refresh", "sync", "download", "library", "settings"}) do assert(clicked[action], action .. " inaccessible") end
 print("Home layout: pagination boundaries, orientation capacity and Tools actions PASS")

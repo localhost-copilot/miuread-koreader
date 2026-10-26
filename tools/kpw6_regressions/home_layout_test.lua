@@ -63,6 +63,8 @@ for _, dimensions in ipairs({{1236,1648}, {1648,1236}, {600,800}, {800,600}}) do
             on_shelf_page=action("page"), section_cache_key="shelf", section_revision="1",
         }
         local widget = assert(Home.show(options))
+        assert(widget._navigation_targets[1].selected==true,"Home dock must select Home")
+        for index=2,4 do assert(not widget._navigation_targets[index].selected) end
         local m = widget._metrics_cache
         local summary = widget._summary_slot
         assert(text_values(summary.parent[summary.index]):find("微信 · 今日 8分钟", 1, true),

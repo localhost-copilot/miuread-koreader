@@ -154,6 +154,7 @@ local LocalLibrary={normalize=tostring}
 local lfs={attributes=function() return 'file' end}
 local sheet
 local ActionSheet={show=function(opts) sheet=opts end}
+function Plugin:_show_home_book_actions(_,opts) ActionSheet.show(opts) end
 ]]..home_method..'\n'..assert(source:match('(function Plugin:_finished_status_action%(book%).-\nend)'))
     ..'\n'..assert(source:match('(function Plugin:_home_action_function_actions%(key,anchor%).-\nend)'))
     ..'\nreturn Plugin,function() return sheet end'))()
@@ -506,6 +507,7 @@ assert(#auth_flows==flow_count and api.writes==writes and not p.job)
 p=plugin(); p.settings.shelf_cache={books={book}}
 assert(M.shelf_action(p,book).text=='从微信书架移除','legacy effective shelf lost the removal entrance')
 p._home_hold_book=home_methods._home_hold_book
+p._show_home_book_actions=home_methods._show_home_book_actions
 p._finished_status_action=home_methods._finished_status_action
 function p:logged_in() return true end
 function p:_request_finished_status(target,desired) self.finished_request={id=target.bookId,desired=desired} end

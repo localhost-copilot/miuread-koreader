@@ -4342,7 +4342,7 @@ function Plugin:_home_modal_surface_active()
     for index=#stack,1,-1 do
         local window=stack[index]
         local widget=window and window.widget or nil
-        if widget and widget._miuread_modal_surface==true
+        if widget and (widget._miuread_modal_surface==true or widget._miuread_desktop_page==true)
             and widget._miuread_recovery_surface~=true
             and UIManager:isWidgetShown(widget) then
             self._home_modal_cooldown_until=math.max(
@@ -8822,8 +8822,10 @@ function Plugin:_home_variant_download_action(target,annotations,context)
     end
 
     return {
-        icon=annotations==true and "highlight" or "⇩",
+        icon=annotations==true and "highlight" or "⇩",group="download",
         label=label,detail=detail,callback=callback,
+        desktop_label=(installed and "" or (task and task.status=="active" and "" or ((task or repair) and "继续下载" or "下载")))
+            ..(annotations==true and "批注版" or "纯净版"),
     }
 end
 
@@ -8944,7 +8946,6 @@ end
 function Plugin:_home_show_full_shelf(title,rows,options)
     options=type(options)=="table" and options or {}
     rows=type(rows)=="table" and rows or {}
-    if #rows==0 then self:info("这里还没有书籍") return false end
     -- The unified full-shelf list can contain local/FanQie/Z-Library rows.
     -- Only WeRead rows may enter the WeRead session/download preparation path.
     local weread_rows={}
@@ -8952,13 +8953,15 @@ function Plugin:_home_show_full_shelf(title,rows,options)
         if UnifiedLibrary.canonical_source(row)=="weread" then weread_rows[#weread_rows+1]=row end
     end
     self:_prepare_shelf_rows(weread_rows)
+    for _,row in ipairs(rows) do row.source_label=self:_home_source_text(row) end
+    self:_home_close_full_shelf()
     local prefs=self.store:preferences()
     local show_covers=self:_shelf_covers_enabled(prefs)
     if show_covers then self:_begin_cover_guard("home_all_books") end
     local view
     local ok,result=pcall(function()
-        view=FullShelfView.show{
-            title=tostring(title or "全部书籍").." · "..tostring(#rows).."本",
+        local view_options={
+            title=tostring(title or "书架"),
             books=rows,
             show_actions=options.show_actions==true,
             show_tabs=false,
@@ -8967,7 +8970,14 @@ function Plugin:_home_show_full_shelf(title,rows,options)
             right_action_label=options.right_action_label,
             on_left_action=options.on_left_action,
             on_right_action=options.on_right_action,
-            on_select=function(book,anchor) self:_home_open_book(book,anchor) end,
+            on_source=options.on_source,
+            on_sort=options.on_sort,
+            source_label=options.source_label,
+            sort_label=options.sort_label,
+            status_tabs=options.status_tabs,
+            view_mode=self._home_all_books_view_mode or "list",
+            on_view_mode=function(mode) self._home_all_books_view_mode=mode end,
+            on_select=function(book,anchor,ges) self:_home_open_book(book,anchor,ges) end,
             on_page_changed=function(page,first,last,current)
                 if show_covers then self:_on_shelf_page(rows,current,page,first,last) end
             end,
@@ -8978,6 +8988,8 @@ function Plugin:_home_show_full_shelf(title,rows,options)
                 collectgarbage("step",120)
             end,
         }
+        for key,value in pairs(self:_home_desktop_options()) do view_options[key]=value end
+        view=FullShelfView.show(view_options)
         return view
     end)
     view=result or view
@@ -9054,7 +9066,7 @@ function Plugin:_home_close_full_shelf()
     self._home_full_shelf_view=nil
 end
 
-function Plugin:_home_all_books_option_dialog()
+function Plugin:_home_all_books_option_dialog(only)
     local state=self:_home_all_books_state()
     local source_labels={all="全部来源",weread="微信读书",fanqie="番茄小说",zlibrary="Z-Library",["local"]="本地书",wechat_mp="公众号"}
     local status_labels={all="全部状态",reading="阅读中",unread="尚未开始",finished="已读完",["local"]="本机已有",failed="异常"}
@@ -9089,6 +9101,8 @@ function Plugin:_home_all_books_option_dialog()
     local rank={all=0,weread=1,fanqie=2,wechat_mp=3,zlibrary=4,["local"]=5}
     table.sort(source_choices,function(a,b) return (rank[a] or 99)<(rank[b] or 99) end)
 
+    if only=="source" then return self:_show_standalone_menu("书籍来源",choice_rows("source",source_choices,source_labels)) end
+    if only=="sort" then return self:_show_standalone_menu("书架排序",choice_rows("sort",{"recent","added","title","author"},sort_labels)) end
     local rows={
         {text="来源",post_text=source_labels[state.source],sub_item_table_func=function()
             return choice_rows("source",source_choices,source_labels)
@@ -9113,14 +9127,30 @@ end
 
 function Plugin:show_home_all_books()
     local rows=self:_home_all_books_apply(self:_home_all_rows())
-    if #rows==0 then self:info("当前筛选条件下没有书籍") return false end
+    local state=self:_home_all_books_state()
+    local source_labels={all="全部来源",weread="微信读书",fanqie="番茄小说",zlibrary="Z-Library",["local"]="本地书",wechat_mp="公众号"}
+    local sort_labels={recent="最近阅读",added="最近加入",title="按书名",author="按作者"}
+    local tabs={}
+    for _,entry in ipairs({{"all","全部"},{"reading","阅读中"},{"finished","已读完"}}) do
+        local value=entry[1]
+        tabs[#tabs+1]={label=entry[2],selected=state.status==value,callback=function()
+            state.status=value
+            self:_home_close_full_shelf()
+            UIManager:nextTick(function() self:show_home_all_books() end)
+        end}
+    end
     local view
-    local ok=self:_home_show_full_shelf("全部书籍",rows,{
+    local ok=self:_home_show_full_shelf("书架",rows,{
         show_actions=true,
         left_action_label="搜索全部书籍",
         right_action_label="筛选与排序",
         on_left_action=function() self:show_home_search_dialog() end,
         on_right_action=function() self:_home_all_books_option_dialog() end,
+        on_source=function() self:_home_all_books_option_dialog("source") end,
+        on_sort=function() self:_home_all_books_option_dialog("sort") end,
+        source_label=source_labels[state.source],
+        sort_label=sort_labels[state.sort],
+        status_tabs=tabs,
     })
     return ok
 end
@@ -9781,6 +9811,48 @@ function Plugin:_show_home_local_book_more(book,anchor)
 end
 
 
+function Plugin:_home_desktop_options()
+    return {
+        clock_text=self:_display_time("%H:%M"),battery_text=self:_home_battery_text(),
+        get_status=function()
+            HomeData.quick_power_state(true)
+            return {clock_text=self:_display_time("%H:%M"),battery_text=self:_home_battery_text()}
+        end,
+        on_device=function() self:show_home_quick_panel() end,
+        on_navigate=function(destination) self:_home_navigate(destination) end,
+    }
+end
+
+function Plugin:_home_navigate(destination)
+    self._desktop_navigation_generation=(self._desktop_navigation_generation or 0)+1
+    local generation=self._desktop_navigation_generation
+    self:_close_miuread_transients()
+    UIManager:nextTick(function()
+        if generation~=self._desktop_navigation_generation then return end
+        if destination=="library" then self:show_home_all_books()
+        elseif destination=="bookstore" then self:show_bookstore()
+        elseif destination=="tools" then self:show_home_menu()
+        elseif HomeView.is_shown() then HomeView.raise()
+        else self:show_miuread_home(false,false) end
+    end)
+    return true
+end
+
+function Plugin:_show_home_book_actions(book,options)
+    if not self:_home_enabled() then return ActionSheet.show(options) end
+    TransientGuard.close_all()
+    local current=self._home_book_action_view
+    if current and UIManager:isWidgetShown(current) then UIManager:close(current) end
+    local opts=self:_home_desktop_options()
+    opts.book=book
+    opts.actions=options.actions
+    opts.source_label=self:_home_source_text(book)
+    opts.availability_text=(book.local_available==true or book.file and U.file_exists(book.file)) and "本机已有内容" or "选择版本下载后阅读"
+    opts.on_close=function(view) if self._home_book_action_view==view then self._home_book_action_view=nil end end
+    self._home_book_action_view=require("miuread.book_actions_view").show(opts)
+    return true
+end
+
 function Plugin:_home_hold_book(book,anchor)
     if not book then return end
     local local_path,local_mode=self:_local_entry_mode(book)
@@ -9792,21 +9864,21 @@ function Plugin:_home_hold_book(book,anchor)
     end
     if book.external_source=="fanqie" then
         local fanqie_actions={
-            {icon="book",label="打开番茄",detail="使用番茄插件原生书籍菜单",callback=function() UnifiedLibrary.open_external(self,book) end},
+            {icon="book",primary=true,label="打开番茄",detail="使用番茄插件原生书籍菜单",callback=function() UnifiedLibrary.open_external(self,book) end},
         }
         fanqie_actions[#fanqie_actions+1]={icon="i",label="来源信息",detail=book.remote_shelf==true and "番茄账号书架缓存" or "番茄本机完整缓存",callback=function() self:info("来源：番茄小说\n状态："..tostring(book.source_state or "缓存书架")) end}
-        ActionSheet.show{
+        self:_show_home_book_actions(book,{
             anchor=anchor,preferred_direction="above",width_ratio=.62,
             title=tostring(book.title or "番茄小说"),
             subtitle=U.trim(tostring(book.author or ""))~="" and tostring(book.author) or "番茄小说",
             actions=fanqie_actions,wide_last=(#fanqie_actions%2==1),
-        }
+        })
         return true
     end
     local id=tostring(book.bookId or book.book_id or "")
     if Protocol.is_mp_account(id) then
         local target=U.copy(book)
-        ActionSheet.show{
+        self:_show_home_book_actions(book,{
             anchor=anchor,
             preferred_direction="above",
             width_ratio=.62,
@@ -9825,7 +9897,7 @@ function Plugin:_home_hold_book(book,anchor)
                 {icon="⇩",label="下载管理",detail="查看文章下载任务",callback=function() self:show_downloads() end},
             },
             wide_last=true,
-        }
+        })
         return
     end
     local unified_source=UnifiedLibrary.canonical_source(book)
@@ -9834,18 +9906,18 @@ function Plugin:_home_hold_book(book,anchor)
         local path_mode=lfs.attributes(LocalLibrary.normalize(book.file or book.local_path or ""),"mode")
         if path_mode=="directory" then return self:show_local_browser(book.file or book.path,{path=LocalLibrary.normalize(self:_home_root()),name="本地书库"},{},false,nil,true) end
         local local_actions={
-            {icon="book",label="阅读",detail="直接打开本机内容",callback=function() self:_home_open_book(book,nil,nil,true) end},
-            {icon="▤",label="本机文件",detail="查看或删除这个本地文件",callback=function() BookLocalFilesDialog.open_local(self,book) end},
+            {icon="book",primary=true,label="阅读",detail="直接打开本机内容",callback=function() self:_home_open_book(book,nil,nil,true) end},
+            {icon="▤",group="download",label="本机文件",detail="查看或删除这个本地文件",callback=function() BookLocalFilesDialog.open_local(self,book) end},
         }
         local_actions[#local_actions+1]={icon="i",label="查看详情",detail="文件、进度和图书信息",callback=function() self:_home_local_book_details(book) end}
         local_actions[#local_actions+1]={icon="↻",label="更新书籍信息",detail="重新提取并尝试网络补全",callback=function() self:_home_refresh_one_book_metadata(book,true) end}
         local_actions[#local_actions+1]={icon="▤",label="KOReader 管理",detail="文件、文件夹与分类交给 KOReader",callback=function() self:_show_home_local_book_more(book,anchor) end}
-        ActionSheet.show{
+        self:_show_home_book_actions(book,{
             anchor=anchor,preferred_direction="above",width_ratio=.66,
             title=tostring(book.title or "本机内容"),
             subtitle=U.trim(tostring(book.author or ""))~="" and tostring(book.author) or "本机内容",
             actions=local_actions,wide_last=(#local_actions%2==1),
-        }
+        })
         return true
     end
 
@@ -9857,7 +9929,7 @@ function Plugin:_home_hold_book(book,anchor)
     local actions={}
 
     if available then
-        actions[#actions+1]={icon="book",label="阅读",detail="打开最近使用的本地版本",callback=function() self:_home_open_book(target,nil,nil,true) end}
+        actions[#actions+1]={icon="book",primary=true,label="阅读",detail="打开最近使用的本地版本",callback=function() self:_home_open_book(target,nil,nil,true) end}
     end
 
     -- Whole-book variants own their own state. A failed clean download must not
@@ -9883,9 +9955,9 @@ function Plugin:_home_hold_book(book,anchor)
         local downloaded_chapters=tonumber(local_summary.downloaded_chapter_count or local_summary.chapter_count or 0) or 0
         chapter_label="按章节下载（已下载 "..tostring(downloaded_chapters).." 章）"
     end
-    actions[#actions+1]={icon="▤",label=chapter_label,detail=chapter_detail,callback=chapter_callback}
+    actions[#actions+1]={icon="▤",group="download",label=chapter_label,detail=chapter_detail,callback=chapter_callback}
     if local_summary.has_local==true then
-        actions[#actions+1]={icon="▤",label="本机文件",detail="查看或删除已下载内容",callback=function()
+        actions[#actions+1]={icon="▤",group="download",label="本机文件",detail="查看或删除已下载内容",callback=function()
             BookLocalFilesDialog.open_generated(self,id)
         end}
     end
@@ -9893,7 +9965,7 @@ function Plugin:_home_hold_book(book,anchor)
     if unified_source=="weread" and not Protocol.is_mp(id) then
         local shelf_action=require("miuread.bookstore").shelf_action(self,target)
         if shelf_action then
-            actions[#actions+1]={icon="library",label=shelf_action.text,
+            actions[#actions+1]={icon="library",label=shelf_action.text,danger=shelf_action.text=="从微信书架移除",
                 detail="同步微信书架，保留本机文件",callback=shelf_action.callback}
         end
     end
@@ -9901,7 +9973,7 @@ function Plugin:_home_hold_book(book,anchor)
     if finished_action then
         actions[#actions+1]={icon="✓",label=finished_action.text,detail=finished_action.post_text,callback=finished_action.callback}
     end
-    ActionSheet.show{
+    self:_show_home_book_actions(book,{
         anchor=anchor,
         preferred_direction="above",
         width_ratio=.72,
@@ -9909,7 +9981,7 @@ function Plugin:_home_hold_book(book,anchor)
         subtitle=U.trim(tostring(target.author or ""))~="" and tostring(target.author)
             or (local_summary.has_local==true and "已有本机内容" or "尚未下载"),
         actions=actions,wide_last=(#actions%2==1),
-    }
+    })
     return true
 end
 
@@ -12452,6 +12524,26 @@ function Plugin:maintenance_menu()
     return PluginSettings.system_maintenance(self)
 end
 
+function Plugin:_home_frontlight_controls(source)
+    if not Device:hasFrontlight() then return nil end
+    local minimum,maximum=self:_reader_frontlight_bounds()
+    local warmth_state=self:_reader_warmth_state()
+    return {
+        get_enabled=function() return self:_reader_frontlight_enabled() end,
+        get_night=function() return self:_reader_night_enabled() end,
+        on_toggle=function() return self:_reader_toggle_frontlight(source) end,
+        on_night=function() return self:_home_toggle_night() end,
+        brightness={min=minimum,max=maximum,value=self:_reader_frontlight_value() or minimum,get_value=function() return self:_reader_frontlight_value() or minimum end,on_set=function(value,interaction)
+            if not self:_reader_set_frontlight(value,source,interaction) then return false end
+            return self:_reader_frontlight_value() or value
+        end},
+        warmth=warmth_state and {min=warmth_state.min,max=warmth_state.max,value=warmth_state.value,get_value=function() local latest=self:_reader_warmth_state(); return latest and latest.value or warmth_state.value end,on_set=function(value,interaction)
+            if not self:_reader_set_warmth(value,source,interaction) then return false end
+            local latest=self:_reader_warmth_state(); return latest and latest.value or value
+        end} or nil,
+    }
+end
+
 function Plugin:show_home_quick_panel(more_expanded)
     local started=monotonic_wall_time()
     local now=started
@@ -12537,25 +12629,7 @@ function Plugin:show_home_quick_panel(more_expanded)
     local battery=tonumber(state.battery) and (tostring(math.floor(state.battery+.5)).."%") or "未知"
     local status_text=tostring(self._home_panel_status_text or "")
     if status_text=="" and sync_label:match("^失败") then status_text="同步需要处理" end
-    local frontlight_control=nil
-    if Device:hasFrontlight() then
-        local minimum,maximum=self:_reader_frontlight_bounds()
-        local warmth_state=self:_reader_warmth_state()
-        frontlight_control={
-            get_enabled=function() return self:_reader_frontlight_enabled() end,
-            get_night=function() return self:_reader_night_enabled() end,
-            on_toggle=function() return self:_reader_toggle_frontlight("home_quick_panel") end,
-            on_night=function() return self:_home_toggle_night() end,
-            brightness={min=minimum,max=maximum,value=self:_reader_frontlight_value() or minimum,get_value=function() return self:_reader_frontlight_value() or minimum end,on_set=function(value,interaction)
-                if not self:_reader_set_frontlight(value,"home_quick_panel",interaction) then return false end
-                return self:_reader_frontlight_value() or value
-            end},
-            warmth=warmth_state and {min=warmth_state.min,max=warmth_state.max,value=warmth_state.value,get_value=function() local latest=self:_reader_warmth_state(); return latest and latest.value or warmth_state.value end,on_set=function(value,interaction)
-                if not self:_reader_set_warmth(value,"home_quick_panel",interaction) then return false end
-                local latest=self:_reader_warmth_state(); return latest and latest.value or value
-            end} or nil,
-        }
-    end
+    local frontlight_control=self:_home_frontlight_controls("home_quick_panel")
     local prepared=monotonic_wall_time()
     local panel,err=HomeQuickPanel.show{
         time_text=self:_display_time("%H:%M"),
@@ -12772,7 +12846,7 @@ function Plugin:tools_menu()
     }
 end
 
-function Plugin:show_home_menu()
+function Plugin:_show_home_tools_menu()
     if not self:_home_enabled() then return self:_show_standalone_menu("觅阅设置",self:settings_menu()) end
     -- The fixed navigation replaces the old shortcut row. Keep every user's
     -- configured shortcut reachable here, including sync, downloads and sleep.
@@ -12788,6 +12862,35 @@ function Plugin:show_home_menu()
         rows[#rows+1]={text="设置",callback=function() self:_show_home_settings_center() end}
     end
     return self:_show_standalone_menu("工具",rows,{page_size=7})
+end
+
+function Plugin:show_home_menu()
+    if not self:_home_enabled() then return self:_show_home_tools_menu() end
+    TransientGuard.close_all()
+    if self._home_tools_view and UIManager:isWidgetShown(self._home_tools_view) then UIManager:close(self._home_tools_view) end
+    local opts=self:_home_desktop_options()
+    local state=HomeData.cached_device_state() or {}
+    opts.wifi_name=U.trim(tostring(state.wifi_name or ""))
+    opts.wifi_status=state.wifi_on==false and "已关闭" or (state.connected==true and (state.online==false and "无网络" or "已连接") or "未连接")
+    opts.on_wifi=function() self:_home_wifi_settings() end
+    opts.frontlight=self:_home_frontlight_controls("home_tools")
+    opts.sync={icon="refresh",label="同步",detail=self:_home_sync_status_label_cached(),callback=function() self:_sync_home_pending({source="home_tools"}) end,
+        hold_callback=function() self:show_sync_status(false) end}
+    local download=self:_download_state()
+    local detail=download.status=="active" and ("下载中 "..tostring(self:_download_percent(download)).."%")
+        or (download.status=="failed" and "下载需要处理" or (#self.store:download_queue()>0 and "查看排队任务" or "无进行中任务"))
+    opts.downloads={icon="download",label="下载",detail=detail,callback=function() self:show_downloads() end}
+    opts.rows={
+        {icon="history",label="阅读历史",callback=function() self:show_home_reading_history() end},
+        {icon="folder",label="文件管理",callback=function() self:_show_standalone_menu("文件管理",self:home_file_manager_menu()) end},
+        {icon="plus",label="插件与扩展",callback=function() self:_show_standalone_menu("插件与扩展",PluginSettings.plugins_extensions(self)) end},
+        {icon="settings",label="觅阅设置",callback=function() self:_show_home_settings_center() end},
+        {icon="settings",label="KOReader 设置",callback=function() self:_show_native_koreader_menu() end},
+        {icon="more",label="更多工具",detail="刷新、休眠与自定义快捷操作",callback=function() self:_show_home_tools_menu() end},
+    }
+    opts.on_close=function(view) if self._home_tools_view==view then self._home_tools_view=nil end end
+    self._home_tools_view=require("miuread.tools_view").show(opts)
+    return true
 end
 
 function Plugin:_mark_reader_busy(seconds,share_report)

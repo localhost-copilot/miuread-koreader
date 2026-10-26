@@ -25,6 +25,7 @@ local U = require("miuread.util")
 local ShelfProgress = require("miuread.shelf_progress")
 local Config = require("miuread.config")
 local HomeLayout = require("miuread.home_layout")
+local Desktop = require("miuread.desktop_ui")
 local UiScale = require("miuread.ui_scale")
 local Ui = require("miuread.ui_components")
 
@@ -461,53 +462,6 @@ local function shelf_book_card(book, width, height, callback, hold_callback)
         function(anchor) if hold_callback then hold_callback(book, anchor) end end)
 end
 
-local function home_action_icon(icon, width, height, enabled)
-    local size = math.min(width, height, UiScale.dp(25, 22, 34))
-    return Ui.icon(icon, width, height, size, {
-        icon_key = icon,
-        face = UiScale.iconFace("cfont", 20, 27, 17),
-        fgcolor = enabled and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_GRAY,
-    })
-end
-
-local function action_button(entry, width, height)
-    local enabled = entry.enabled ~= false
-    local icon_h = math.max(UiScale.dp(24, 21, 33), math.floor(height * .42))
-    local gap_h = UiScale.dp(2, 1, 4)
-    local label_h = math.max(UiScale.dp(17, 15, 23), math.floor(height * .27))
-    local body = VerticalGroup:new{
-        align = "center",
-        home_action_icon(tostring(entry.icon_key or entry.icon or "•"), width, icon_h, enabled),
-        VerticalSpan:new{height = gap_h},
-        CenterContainer:new{
-            dimen = Geom:new{w = width, h = label_h},
-            TextWidget:new{
-                text = tostring(entry.label or ""),
-                face = face("smallinfofont", 9.5, 13),
-                bold = true,
-                fgcolor = enabled and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_GRAY,
-            },
-        },
-    }
-    local child = OverlapGroup:new{dimen = Geom:new{w = width, h = height}, allow_mirroring = false}
-    child[#child + 1] = CenterContainer:new{dimen = Geom:new{w = width, h = height}, body}
-    if entry.badge and tostring(entry.badge) ~= "" then
-        local badge_w = math.max(UiScale.dp(22, 18, 32), math.min(UiScale.dp(42, 34, 56), UiScale.dp(12, 10, 18) + U.utf8_len(tostring(entry.badge)) * UiScale.dp(8, 6, 10)))
-        local badge_h = math.max(UiScale.dp(18, 15, 24), math.floor(height * .24))
-        child[#child + 1] = OffsetContainer:new{
-            x_off = math.max(0, width - badge_w - UiScale.dp(4, 3, 7)), y_off = UiScale.dp(2, 1, 4),
-            fixed_frame(badge_w, badge_h, {
-                bordersize = UiScale.line("thin"),
-                radius = UiScale.radius(4, 3, 7),
-                padding = UiScale.dp(1, 1, 3),
-                background = Blitbuffer.COLOR_WHITE,
-            }, TextWidget:new{text = tostring(entry.badge), face = face("smallinfofont", 9, 11), bold = true}),
-        }
-    end
-    return tappable(width, height, child, enabled and entry.callback or nil, enabled and entry.hold_callback or nil)
-end
-
-
 local function category_tabs(tabs, width, height)
     tabs = tabs or {}
     if #tabs == 0 then return background(width, height) end
@@ -812,20 +766,11 @@ local function reading_summary(opts, width, height)
 end
 
 function HomeWidget:_build_navigation(children, m)
-    local items = {
-        {icon_key = "home", label = "首页", callback = self.opts.on_home},
-        {icon_key = "book", label = "书架", callback = self.opts.on_library},
-        {icon_key = "library", label = "书城", callback = self.opts.on_bookstore},
-        {icon_key = "settings", label = "工具", callback = self.opts.on_menu},
-    }
-    self:_add(children, 0, m.nav_y, solid_bar(m.sw, m.line))
-    self._navigation_targets = {}
-    local width = math.floor(m.sw / #items)
-    for index, entry in ipairs(items) do
-        local item = action_button(entry, width, m.nav_h - m.line)
-        self:_add(children, (index - 1) * width, m.nav_y + m.line, item)
-        self._navigation_targets[index] = item
-    end
+    local callbacks = {home = self.opts.on_home, library = self.opts.on_library,
+        bookstore = self.opts.on_bookstore, tools = self.opts.on_menu}
+    self._navigation_targets = Desktop.dock(children, m, "home", function(destination)
+        if callbacks[destination] then callbacks[destination]() end
+    end)
 end
 
 function HomeWidget:_build_sections(children, m, compact, mode)

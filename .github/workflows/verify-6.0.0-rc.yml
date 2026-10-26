@@ -34,6 +34,7 @@ jobs:
             tools/test_finished_status.lua \
             tools/test_shelf_progress.lua \
             tools/test_home_layout.lua \
+            tools/test_desktop_navigation.lua \
             tools/test_position_resolution.lua \
             tools/test_position_state_hotfix.lua \
             tools/test_open_sync_contract.lua \
@@ -60,6 +61,7 @@ jobs:
             tools/test_finished_status.lua \
             tools/test_shelf_progress.lua \
             tools/test_home_layout.lua \
+            tools/test_desktop_navigation.lua \
             tools/test_translation.lua \
             tools/test_translation_generation.lua \
             tools/test_translation_fetch.lua \
