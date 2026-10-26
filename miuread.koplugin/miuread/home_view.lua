@@ -960,6 +960,15 @@ function HomeWidget:_mark_dirty(kind, previous_region)
                 if self._miu_closed or self._section_clean_refresh_task~=task then return end
                 self._section_clean_refresh_task=nil
                 if self._miu_input_suspended==true or self._miu_device_suspended==true then return end
+                -- A delayed shelf cleanup must not flash through a page opened
+                -- from the dock after the section switch was queued.
+                for index=#(UIManager._window_stack or {}),1,-1 do
+                    local widget=UIManager._window_stack[index].widget
+                    if widget and not widget.toast then
+                        if widget~=self then return end
+                        break
+                    end
+                end
                 UIManager:setDirty(self,function() return "full",clean_region end)
                 logger.info("[MiuRead][HomeSwitchPerf] quality cleanup","delay_ms=",tostring(math.floor((tonumber(Config.HOME_SECTION_CLEAN_REFRESH_DELAY) or 2.8)*1000+.5)))
             end
@@ -1357,6 +1366,12 @@ function HomeView.prune_duplicates()
     return closed
 end
 function HomeView.current() return live_widget end
+function HomeView.cancel_section_cleanup()
+    if live_widget and live_widget._section_clean_refresh_task then
+        UIManager:unschedule(live_widget._section_clean_refresh_task)
+        live_widget._section_clean_refresh_task=nil
+    end
+end
 function HomeView.is_shown()
     HomeView.prune_duplicates()
     return live_widget and not live_widget._miu_closed and UIManager:isWidgetShown(live_widget)

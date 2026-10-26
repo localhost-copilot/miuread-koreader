@@ -114,6 +114,18 @@ for _, dimensions in ipairs({{1236,1648}, {1648,1236}, {600,800}, {800,600}}) do
         assert(not widget._section_book_slots["2"])
         widget:updateSection{shelf_books=books,section_cache_key="shelf",section_revision="1",shelf_page=1}
         assert(widget:updateBook("2"), "Returning to cached page lost book update slots")
+        -- A section cleanup queued before dock navigation cannot refresh
+        -- through the newly opened destination or a modal overlay.
+        widget:_mark_dirty("section")
+        local cleanup=assert(widget._section_clean_refresh_task)
+        local UIManager=require("ui/uimanager")
+        local overlay=require("miuread.desktop_ui").frame(20,20)
+        UIManager:show(overlay)
+        local set_dirty=UIManager.setDirty
+        UIManager.setDirty=function() error("Hidden home cleanup requested a refresh") end
+        cleanup()
+        UIManager.setDirty=set_dirty
+        UIManager:close(overlay)
         if output_prefix and dimensions[1] == 1236 and display == "standard" then
             local bb = BB.new(dimensions[1], dimensions[2], BB.TYPE_BB8)
             bb:paintRect(0,0,dimensions[1],dimensions[2],BB.COLOR_WHITE)

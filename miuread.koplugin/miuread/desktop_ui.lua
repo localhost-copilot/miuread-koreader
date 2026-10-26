@@ -207,14 +207,17 @@ function D.Page:onPageSwipe(_,ges)
     if ges.direction=="east" then return self:_change_page(-1) end
     return false
 end
-function D.Page:_status_tick()
-    if self._miu_closed then return end
-    local top
+function D.Page:isTopPage()
+    if self._miu_closed then return false end
     for index=#(UIManager._window_stack or {}),1,-1 do
         local widget=UIManager._window_stack[index].widget
-        if widget and not widget.toast then top=widget; break end
+        if widget and not widget.toast then return widget==self end
     end
-    if top==self and self.opts.get_status then
+    return false
+end
+function D.Page:_status_tick()
+    if self._miu_closed then return end
+    if self:isTopPage() and self.opts.get_status then
         local status=self.opts.get_status()
         self._status_refs.clock:setText(status.clock_text or "--:--")
         self._status_refs.battery:setText(status.battery_text or "--%")
@@ -224,7 +227,9 @@ function D.Page:_status_tick()
     UIManager:scheduleIn(math.max(10,60-os.time()%60),self._status_task)
 end
 function D.Page:onShow()
-    UIManager:setDirty(self,"full")
+    -- A destination replaces most of the viewport, but does not need a
+    -- flashing waveform. The new page paints its dock selection in this frame.
+    UIManager:setDirty(self,"ui",self.dimen)
     self._status_task=function() self:_status_tick() end
     if self.opts.get_status then UIManager:scheduleIn(math.max(10,60-os.time()%60),self._status_task) end
 end
@@ -244,11 +249,19 @@ function D.Page:onCloseWidget()
 end
 function D.Page:updateItems()
     if self._miu_closed then return false end
+    self:_build()
+    if self:isTopPage() then
+        local m=self._metrics_cache
+        UIManager:setDirty(self,"ui",Geom:new{x=0,y=m.body_y,w=m.sw,h=m.nav_y-m.body_y})
+    end
+    return true
+end
+function D.Page:onSetDimensions()
+    if self._miu_closed then return false end
     self:_build(); UIManager:setDirty(self,"full")
     return true
 end
-function D.Page:onSetDimensions() return self:updateItems() end
-function D.Page:onScreenResize() return self:updateItems() end
-function D.Page:onRotation() return self:updateItems() end
+function D.Page:onScreenResize() return self:onSetDimensions() end
+function D.Page:onRotation() return self:onSetDimensions() end
 
 return D

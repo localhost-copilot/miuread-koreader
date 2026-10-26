@@ -2922,7 +2922,9 @@ function Plugin:_schedule_shelf_cover_refresh(view,generation,delay)
         if generation~=self._cover_generation or not view or view._miu_closed then return end
         self:_begin_cover_guard("shelf_cover_refresh")
         view._suppress_page_callback=true
-        local ok,err=pcall(view.updateItems,view,nil,true)
+        local ok,err
+        if type(view.refreshCovers)=="function" then ok,err=pcall(view.refreshCovers,view)
+        else ok,err=pcall(view.updateItems,view,nil,true) end
         view._suppress_page_callback=false
         if ok then
             self:_clear_cover_guard()
@@ -9827,9 +9829,12 @@ end
 function Plugin:_home_navigate(destination)
     self._desktop_navigation_generation=(self._desktop_navigation_generation or 0)+1
     local generation=self._desktop_navigation_generation
-    self:_close_miuread_transients()
+    HomeView.cancel_section_cleanup()
     UIManager:nextTick(function()
         if generation~=self._desktop_navigation_generation then return end
+        -- Retire and replace the page in the same frame. Closing it before
+        -- nextTick exposes Home and causes an extra native partial refresh.
+        self:_close_miuread_transients()
         if destination=="library" then self:show_home_all_books()
         elseif destination=="bookstore" then self:show_bookstore()
         elseif destination=="tools" then self:show_home_menu()

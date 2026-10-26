@@ -21,6 +21,12 @@ local Guard=require("miuread.transient_guard")
 local Screen=Device.screen
 local width,height=Screen.getWidth,Screen.getHeight
 local cases=0
+local dirty={}
+local original_set_dirty=UIManager.setDirty
+UIManager.setDirty=function(self,widget,mode,region,...)
+    dirty[#dirty+1]={widget=widget,mode=mode,region=region}
+    return original_set_dirty(self,widget,mode,region,...)
+end
 local function text_values(widget,result)
     result=result or {}
     if type(widget.text)=="string" then result[#result+1]=widget.text end
@@ -54,6 +60,27 @@ local function close(widget)
     widget:_close()
     assert(widget._miu_closed and not UIManager:isWidgetShown(widget))
 end
+local function cover_refresh(view,name)
+    local root,target,dock_targets=view[1],view._book_targets[1],view._navigation_targets
+    local slot=assert(view._cover_slots[1])
+    local old=slot.container[1]
+    local path=slot.book.cover_path
+    slot.book.cover_path=path=="miuread/covers/921568.jpg" and "miuread/covers/25462424.jpg" or "miuread/covers/921568.jpg"
+    dirty={}
+    assert(view:refreshCovers())
+    assert(#dirty==1 and dirty[1].mode=="ui" and dirty[1].region==slot.region,"Cover update must request only its image rectangle")
+    assert(slot.container[1]~=old and view[1]==root and view._book_targets[1]==target and view._navigation_targets==dock_targets,
+        "Cover update rebuilt unrelated widgets or hit targets")
+    assert(slot.region.y>=view._metrics_cache.body_y and slot.region.y+slot.region.h<view._metrics_cache.nav_y)
+    render(view,name)
+    dirty={};view:refreshCovers();assert(#dirty==0,"Unchanged covers must not refresh")
+    local overlay=require("miuread.desktop_ui").frame(20,20)
+    UIManager:show(overlay)
+    slot.book.cover_path=path
+    dirty={};view:refreshCovers()
+    assert(#dirty==0 and slot.path==path,"Hidden shelf must update its image without refreshing through an overlay")
+    UIManager:close(overlay)
+end
 for _,dimensions in ipairs({{1236,1648},{1648,1236},{600,800},{800,600}}) do
     Screen.getWidth=function() return dimensions[1] end
     Screen.getHeight=function() return dimensions[2] end
@@ -66,11 +93,14 @@ for _,dimensions in ipairs({{1236,1648},{1648,1236},{600,800},{800,600}}) do
         for index=1,13 do books[index]={bookId=tostring(index),title=index==1 and "原则" or "长书名用于验证边界 A Very Long Book Title "..index,
             author="一位姓名很长的作者 Long Author Name",source_label="微信读书",progress=1,local_available=index==1,
             cover_path="miuread/covers/"..covers[(index-1)%6+1]..".jpg"} end
+        dirty={}
         local library=Shelf.show{title="书架",books=books,show_actions=true,show_covers=true,
             on_left_action=action("search"),on_right_action=action("filter"),on_navigate=action("navigate"),
             on_select=function(book) clicked.book=book.bookId end,
             status_tabs={{label="全部",selected=true,callback=action("all")},{label="阅读中",callback=action("reading")},{label="已读完",callback=action("finished")}}}
         dock(library,"library"); render(library,"library"); regions(library,library._book_regions)
+        for _,entry in ipairs(dirty) do assert(entry.mode~="full","Opening a desktop destination must not force a flashing refresh") end
+        cover_refresh(library,"library-cover-updated")
         local unchanged=library[1]
         library:_set_mode("list"); assert(library[1]==unchanged,"Selecting the current view must not rebuild or flash")
         library._book_targets[1]:onTapSelect(); assert(clicked.book=="1")
@@ -78,6 +108,7 @@ for _,dimensions in ipairs({{1236,1648},{1648,1236},{600,800},{800,600}}) do
         library._status_targets[2]:onTapSelect(); assert(clicked.reading==1)
         library:_change_page(1); assert(#library._book_targets==6 and library.page==2)
         library:_set_mode("grid"); assert(library.page==2); regions(library,library._book_regions); render(library,"grid")
+        cover_refresh(library,"grid-cover-updated")
         library:_change_page(1); assert(#library._book_targets==1 and library.page==3)
         library:_set_mode("list"); assert(library.page==3)
         library._book_targets[1]:onTapSelect(); assert(clicked.book=="13")

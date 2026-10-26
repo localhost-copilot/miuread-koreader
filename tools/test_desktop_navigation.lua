@@ -7,7 +7,8 @@ local queued,stack={},{}
 local home_raised=false
 local ui={_window_stack=stack,nextTick=function(_,callback) queued[#queued+1]=callback end,
     isWidgetShown=function(_,widget) return not widget.closed end}
-local home={is_shown=function() return true end,raise=function() home_raised=true end}
+local home={is_shown=function() return true end,raise=function() home_raised=true end,
+    cancel_section_cleanup=function() end}
 local Plugin=assert(loadstring([[
 local Plugin={}
 local UIManager,HomeView=...
@@ -32,11 +33,14 @@ Plugin.show_home_all_books=Plugin.show_home_all_books_stub
 for _,destination in ipairs({"library","bookstore","tools","home"}) do
     local before=calls.closed or 0
     Plugin:_home_navigate(destination)
-    assert(calls.closed==before+1 and #queued==1,"Navigation must retire previous surfaces before opening the destination")
+    assert((calls.closed or 0)==before and #queued==1,"Navigation must retain the old page until its replacement can paint")
     drain()
+    assert(calls.closed==before+1)
 end
 assert(calls.library==1 and calls.bookstore==1 and calls.tools==1 and home_raised)
+local closed=calls.closed
 Plugin:_home_navigate("library"); Plugin:_home_navigate("tools"); drain()
+assert(calls.closed==closed+1,"Superseded navigation must not expose the underlying home")
 assert(calls.library==1 and calls.tools==2,"Rapid navigation must open only the latest destination")
 home.is_shown=function() return false end
 Plugin:_home_navigate("home"); drain(); assert(calls.home==1)
@@ -163,3 +167,28 @@ timing:_finish_page_transition(1.2,"reader first page")
 transition.page_transition_generation=10;clock=26;paint_callback()
 assert(#samples==2,"A superseded reader transition must not report latency")
 print("Reader timing: first repaint excludes quiet wait, preserves background barrier and records real lag PASS")
+
+-- Cover batches retain coalescing/generation guards while selecting the narrow
+-- desktop updater; the original shelf implementation keeps its old callback.
+local cover_tasks={}
+local cover_ui={scheduleIn=function(_,_,callback) cover_tasks[#cover_tasks+1]=callback end}
+local cover_plugin=assert(loadstring([[
+local Plugin={}
+local UIManager=...
+local logger={warn=function() end}
+]]..method("_schedule_shelf_cover_refresh").."\nreturn Plugin"))(cover_ui)
+function cover_plugin:_begin_cover_guard() end
+function cover_plugin:_clear_cover_guard() end
+cover_plugin._cover_generation=1
+local calls={narrow=0,legacy=0}
+local desktop={refreshCovers=function() calls.narrow=calls.narrow+1 end,
+    updateItems=function() error("Cover batch rebuilt the desktop page") end}
+cover_plugin:_schedule_shelf_cover_refresh(desktop,1)
+cover_plugin:_schedule_shelf_cover_refresh(desktop,1)
+assert(#cover_tasks==1);table.remove(cover_tasks,1)();assert(calls.narrow==1)
+cover_plugin:_schedule_shelf_cover_refresh(desktop,1)
+cover_plugin._cover_generation=2
+table.remove(cover_tasks,1)();assert(calls.narrow==1,"Stale cover batch updated a replacement page")
+cover_plugin:_schedule_shelf_cover_refresh({updateItems=function() calls.legacy=calls.legacy+1 end},2)
+table.remove(cover_tasks,1)();assert(calls.legacy==1)
+print("Cover batches: bounded desktop update, coalescing, stale generation and legacy fallback PASS")

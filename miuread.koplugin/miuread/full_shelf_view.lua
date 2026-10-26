@@ -42,6 +42,29 @@ function Shelf:_set_mode(mode)
     self:updateItems()
     return true
 end
+function Shelf:_add_cover(body,book,x,y,w,h)
+    D.add(body,x,y,D.cover(book,w,h,self.opts.show_covers))
+    return {container=body[#body],book=book,x=x,y=y,w=w,h=h,
+        path=book.home_cover_path or book.cover_path}
+end
+
+-- Cover workers mutate the existing book rows. Replace only changed images;
+-- titles, hit targets, pagination and the desktop chrome keep their objects.
+function Shelf:refreshCovers()
+    if self._miu_closed then return false end
+    for _,slot in ipairs(self._cover_slots or {}) do
+        local path=slot.book.home_cover_path or slot.book.cover_path
+        if path~=slot.path then
+            local old=slot.container[1]
+            slot.container[1]=D.cover(slot.book,slot.w,slot.h,self.opts.show_covers)
+            slot.path=path
+            if old and old.free then old:free() end
+            if self:isTopPage() then UIManager:setDirty(self,"ui",slot.region) end
+        end
+    end
+    return true
+end
+
 function Shelf:_book_row(book,w,h)
     local gap=math.floor(w*.028)
     local cover_h=math.floor(h*.84)
@@ -50,24 +73,28 @@ function Shelf:_book_row(book,w,h)
     local tx=cover_w+gap
     local tw=w-tx-arrow_w
     local body=D.layer(w,h)
-    if cover_w>0 then D.add(body,0,math.floor((h-cover_h)/2),D.cover(book,cover_w,cover_h)) end
+    local cover_slot
+    if cover_w>0 then cover_slot=self:_add_cover(body,book,0,math.floor((h-cover_h)/2),cover_w,cover_h) end
     D.add(body,tx,math.floor(h*.08),D.label(self.opts.discovery and book.display_title or book.title or "未命名",tw,math.floor(h*.31),11.8,{bold=true}))
     D.add(body,tx,math.floor(h*.39),D.label(book.author,tw,math.floor(h*.25),9.3))
     D.add(body,tx,math.floor(h*.64),D.label(status(book,self.opts.discovery),tw,math.floor(h*.25),8.8))
     D.add(body,w-arrow_w,0,D.icon("chevron-right",arrow_w,h,math.floor(h*.22)))
     D.add(body,0,h-2,D.line(w,2,BB.COLOR_GRAY))
     return D.tap(w,h,body,function(anchor,ges) if self.opts.on_select then self.opts.on_select(book,anchor,ges) end end,
-        self.opts.on_hold and function(anchor) self.opts.on_hold(book,anchor) end)
+        self.opts.on_hold and function(anchor) self.opts.on_hold(book,anchor) end),cover_slot
 end
 function Shelf:_book_card(book,w,h)
     local body=D.layer(w,h)
     local cover_h=math.floor(h*.75)
     local cover_w=math.min(math.floor(w*.78),math.floor(cover_h*.68))
-    D.add(body,math.floor((w-cover_w)/2),0,D.cover(book,cover_w,cover_h,self.opts.show_covers))
+    local cover_slot
+    if self.opts.show_covers~=false then
+        cover_slot=self:_add_cover(body,book,math.floor((w-cover_w)/2),0,cover_w,cover_h)
+    else D.add(body,math.floor((w-cover_w)/2),0,D.cover(book,cover_w,cover_h,false)) end
     D.add(body,0,cover_h,D.label(self.opts.discovery and book.display_title or book.title or "未命名",w,math.floor(h*.13),10.5,{bold=true,align="center"}))
     D.add(body,0,math.floor(h*.88),D.label(status(book,self.opts.discovery),w,math.floor(h*.12),8,{align="center"}))
     return D.tap(w,h,body,function(anchor,ges) if self.opts.on_select then self.opts.on_select(book,anchor,ges) end end,
-        self.opts.on_hold and function(anchor) self.opts.on_hold(book,anchor) end)
+        self.opts.on_hold and function(anchor) self.opts.on_hold(book,anchor) end),cover_slot
 end
 function Shelf:_build()
     self.opts.books=self.opts.books or {}
@@ -139,6 +166,7 @@ function Shelf:_build()
     local available=math.max(1,bottom-y)
     self._book_targets={}
     self._book_regions={}
+    self._cover_slots={}
     self.item_table={}
     local first=(self.page-1)*self.perpage+1
     for index=first,math.min(#self.opts.books,first+self.perpage-1) do
@@ -154,7 +182,13 @@ function Shelf:_build()
         end
         local book=self.opts.books[index]
         self.item_table[#self.item_table+1]={book_id=book.bookId or book.book_id,cover_path=book.cover_path}
-        local card=self.view_mode=="grid" and self:_book_card(book,bw,bh) or self:_book_row(book,bw,bh)
+        local card,cover_slot
+        if self.view_mode=="grid" then card,cover_slot=self:_book_card(book,bw,bh)
+        else card,cover_slot=self:_book_row(book,bw,bh) end
+        if cover_slot then
+            cover_slot.region=Geom:new{x=bx+cover_slot.x,y=by+cover_slot.y,w=cover_slot.w,h=cover_slot.h}
+            self._cover_slots[#self._cover_slots+1]=cover_slot
+        end
         self._book_targets[#self._book_targets+1]=card
         self._book_regions[#self._book_regions+1]=Geom:new{x=bx,y=by,w=bw,h=bh}
         D.add(layer,bx,by,card)
