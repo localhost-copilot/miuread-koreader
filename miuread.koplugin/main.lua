@@ -18,6 +18,7 @@ local function monotonic_wall_time()
 end
 local lfs=require("libs/libkoreader-lfs")
 local Config=require("miuread.config")
+local HomeLayout=require("miuread.home_layout")
 local Text=require("miuread.text")
 local U=require("miuread.util")
 local function sanitized_network_list(networks)
@@ -2662,7 +2663,7 @@ function Plugin:_home_cached_cloud_page(section,page,rows)
     -- Cloud cache invalidation is explicit on a remote snapshot replacement or
     -- full Home rebuild. Cover/progress mutations update the visible cached row
     -- object in place, so a section repaint must not force this page to hydrate
-    -- all eight books again when the user returns to it.
+    -- every visible book again when the user returns to it.
     return entry.rows
 end
 
@@ -5338,8 +5339,7 @@ function Plugin:_home_build_tabs(active)
 end
 
 function Plugin:_home_page_limit()
-    -- The unified Home library keeps the stable 4 × 2 grid in both orientations.
-    return 8
+    return HomeLayout.PAGE_SIZE
 end
 
 function Plugin:_home_preview_page(rows,hero,page,limit)
@@ -5347,7 +5347,7 @@ function Plugin:_home_preview_page(rows,hero,page,limit)
     local filtered,seen={},{}
     -- “继续阅读”是快捷入口，不应从对应书架中隐藏同一本书。
     -- Folder cards use the same one-slot geometry as book covers, so every
-    -- local item participates in the same stable 4×2 pagination.
+    -- local item participates in the same fixed-capacity pagination.
     for _,book in ipairs(rows or {}) do
         local key=self:_home_book_key(book)
         if key~="" and not seen[key] then
@@ -12774,7 +12774,20 @@ end
 
 function Plugin:show_home_menu()
     if not self:_home_enabled() then return self:_show_standalone_menu("觅阅设置",self:settings_menu()) end
-    return self:_show_standalone_menu("工具",self:tools_menu(),{page_size=7})
+    -- The fixed navigation replaces the old shortcut row. Keep every user's
+    -- configured shortcut reachable here, including sync, downloads and sleep.
+    local rows, seen = {}, {}
+    for _, action in ipairs(self:_home_action_entries()) do
+        rows[#rows+1]={text=action.label,post_text=action.badge,callback=action.callback,enabled=action.enabled}
+        seen[action.label]=true
+    end
+    for _, row in ipairs(self:tools_menu()) do
+        if not seen[row.text] then rows[#rows+1]=row end
+    end
+    if not seen["设置"] then
+        rows[#rows+1]={text="设置",callback=function() self:_show_home_settings_center() end}
+    end
+    return self:_show_standalone_menu("工具",rows,{page_size=7})
 end
 
 function Plugin:_mark_reader_busy(seconds,share_report)
@@ -17394,7 +17407,7 @@ function Plugin:_show_miuread_home_now(force_scan,from_refresh,quiet,refresh_kin
 
     -- Cloud sections stay as a lightweight cached index. The Home screen no
     -- longer scans local variants or validates every cached cover up front.
-    -- Those costs are paid only for the eight books on the visible page.
+    -- Those costs are paid only for the books on the visible page.
     local account_rows=self:_home_cloud_rows(cached_books,"account")
     local mp_rows=self:_home_cloud_rows(cached_mp,"mp")
     local mp_article_rows=self:_home_cached_mp_article_rows(mp_rows)
@@ -17505,6 +17518,16 @@ function Plugin:_show_miuread_home_now(force_scan,from_refresh,quiet,refresh_kin
         on_weread_stats=function() self:_show_home_weread_stats() end,
         on_local_stats=function() self:_show_home_local_stats() end,
         on_menu=function() self:show_home_menu() end,
+        on_home=function() self:_set_home_section("shelf") end,
+        on_library=function() self:show_home_all_books() end,
+        on_bookstore=function() self:show_bookstore() end,
+        on_search=function() self:show_home_search_dialog("shelf") end,
+        on_stats=function()
+            self:_show_standalone_menu("阅读统计",{
+                {text="微信读书",callback=function() self:_show_home_weread_stats() end},
+                {text="本地阅读",callback=function() self:_show_home_local_stats() end},
+            })
+        end,
         on_back=function() return self:_home_handle_back() end,
         on_empty_account=function() self:_home_open_section(active) end,
         on_open_book=function(book,anchor,ges) self:_home_open_book(book,anchor,ges) end,
