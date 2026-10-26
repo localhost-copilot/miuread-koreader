@@ -134,6 +134,7 @@ local DownloadDatabase=require("miuread.download_database")
 local StatusToast=require("miuread.status_toast")
 local BookExcerptDialog=require("miuread.book_excerpt_dialog")
 local ReaderTransitionGuard=require("miuread.reader_transition_guard")
+local ReaderOpenGC=require("miuread.reader_open_gc")
 local PluginMenu=require("miuread.plugin_menu")
 local PluginSettings=require("miuread.plugin_settings")
 local Actions=require("miuread.actions")
@@ -20963,7 +20964,14 @@ function Plugin:_open_file_direct(path,session_kind,book_id)
     local ReaderUI=require("apps/reader/readerui")
     local ok,result=xpcall(function()
         UIManager:broadcastEvent(Event:new("SetupShowReader"))
-        return ReaderUI:showReader(path)
+        local finish_gc_handoff=ReaderOpenGC.prepare(UIManager,ReaderUI)
+        local opened=ReaderUI:showReader(path)
+        local removed=finish_gc_handoff()
+        if removed>0 then
+            logger.info("[MiuRead][ReaderOpenPerf] duplicate cover collection coalesced",
+                "callbacks=",tostring(removed))
+        end
+        return opened
     end,debug.traceback)
     if not ok then return fail(result) end
     if result==false then return fail("KOReader 拒绝打开目标书籍") end
