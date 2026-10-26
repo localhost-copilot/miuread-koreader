@@ -70,6 +70,8 @@ for _,dimensions in ipairs({{1236,1648},{1648,1236},{600,800},{800,600}}) do
             on_select=function(book) clicked.book=book.bookId end,
             status_tabs={{label="全部",selected=true,callback=action("all")},{label="阅读中",callback=action("reading")},{label="已读完",callback=action("finished")}}}
         dock(library,"library"); render(library,"library"); regions(library,library._book_regions)
+        local unchanged=library[1]
+        library:_set_mode("list"); assert(library[1]==unchanged,"Selecting the current view must not rebuild or flash")
         library._book_targets[1]:onTapSelect(); assert(clicked.book=="1")
         library._search_target:onTapSelect(); assert(clicked.search==1)
         library._status_targets[2]:onTapSelect(); assert(clicked.reading==1)
@@ -83,6 +85,8 @@ for _,dimensions in ipairs({{1236,1648},{1648,1236},{600,800},{800,600}}) do
         actions[#actions+1]={label="从微信书架移除",danger=true,callback=action("remove")}
         local book=Book.show{book=books[1],source_label="微信读书",actions=actions,on_navigate=action("navigate")}
         dock(book,"library"); regions(book,book._action_regions); render(book,"book")
+        unchanged=book[1]
+        book:_change_page(-1); assert(book[1]==unchanged,"A swipe beyond the first page must not rebuild or flash")
         assert(UIManager:isWidgetShown(library),"Opening book actions must retain the shelf")
         book._action_targets[1]:onTapSelect(); assert(clicked.secondary1==1 and UIManager:isWidgetShown(book))
         book:_change_page(1); assert(#book._action_targets==2); regions(book,book._action_regions)

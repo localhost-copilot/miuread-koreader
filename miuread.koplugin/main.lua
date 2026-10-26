@@ -17053,6 +17053,24 @@ function Plugin:_finish_page_transition(delay,reason)
     local generation=tonumber(HOME_SESSION.page_transition_generation) or 0
     local transition_kind=tostring(HOME_SESSION.page_transition_started_kind or HOME_SESSION.page_transition_state or "")
     local transition_started=tonumber(HOME_SESSION.page_transition_started_clock) or 0
+    local reader_first_page=transition_kind=="opening_reader" and transition_started>0
+        and tostring(reason or ""):find("reader first page",1,true)
+    if reader_first_page and HOME_SESSION.reader_first_frame_generation~=generation then
+        HOME_SESSION.reader_first_frame_generation=generation
+        -- Measure after the first repaint, independently of the quiet period
+        -- that protects it from background downloads. That deliberate wait is
+        -- not time spent opening the book and used to trigger false lag alerts.
+        local record_first_frame=function()
+            if generation~=(tonumber(HOME_SESSION.page_transition_generation) or 0)
+                or not self:_active_reader_ui() or reader_close_active() then return end
+            local elapsed_ms=math.floor((monotonic_wall_time()-transition_started)*1000+.5)
+            logger.info("[MiuRead][Perf] interaction","kind=reader_open","elapsed_ms=",tostring(elapsed_ms),"first_frame=true")
+            self:_record_performance("reader_open",elapsed_ms)
+            if self._performance_prompt_pending then self:_schedule_performance_prompt(1.2) end
+        end
+        if type(UIManager.tickAfterNext)=="function" then UIManager:tickAfterNext(record_first_frame)
+        else UIManager:scheduleIn(.05,record_first_frame) end
+    end
     if self._page_transition_release_task then
         UIManager:unschedule(self._page_transition_release_task)
         self._page_transition_release_task=nil
@@ -17075,13 +17093,6 @@ function Plugin:_finish_page_transition(delay,reason)
         local reason_text=tostring(reason or "surface ready")
         logger.info("[MiuRead][Transition] complete",reason_text,
             "generation=",tostring(generation))
-        if transition_kind=="opening_reader" and transition_started>0
-            and reason_text:find("reader first page",1,true) then
-            local elapsed_ms=math.floor((monotonic_wall_time()-transition_started)*1000+.5)
-            logger.info("[MiuRead][Perf] interaction","kind=reader_open","elapsed_ms=",tostring(elapsed_ms))
-            self:_record_performance("reader_open",elapsed_ms)
-            if self._performance_prompt_pending then self:_schedule_performance_prompt(1.2) end
-        end
         if generation==(tonumber(HOME_SESSION.page_transition_generation) or 0) then
             HOME_SESSION.page_transition_started_clock=0
             HOME_SESSION.page_transition_started_kind=nil
@@ -17255,6 +17266,10 @@ function Plugin:_reader_close_snapshot()
 end
 
 function Plugin:_complete_reader_close(generation,reason)
+    -- ReaderUI frees its plugin after CloseDocument. The parked desktop owns
+    -- the restored callbacks and delayed work, so finish on that live instance.
+    local owner=home_owner()
+    if owner and owner~=self then return owner:_complete_reader_close(generation,reason) end
     if generation~=(tonumber(READER_CLOSE.generation) or 0) or READER_CLOSE.state=="idle" then return false end
     local snapshot=self:_reader_close_snapshot()
     -- MiuRead keeps its rendered home parked under ReaderUI. Once ReaderUI has
@@ -17798,6 +17813,8 @@ function Plugin:_ensure_filemanager_base(file,opts)
 end
 
 function Plugin:_restore_home_after_reader_close(attempt,generation)
+    local owner=home_owner()
+    if owner and owner~=self then return owner:_restore_home_after_reader_close(attempt,generation) end
     sync_home_session()
     attempt=tonumber(attempt) or 1
     if generation==nil then

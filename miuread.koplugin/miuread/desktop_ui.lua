@@ -196,6 +196,7 @@ end
 function D.Page:_close(action)
     if self._miu_closed then return true end
     self._pending_action=action
+    self._restore_parent=action==nil
     UIManager:close(self)
     return true
 end
@@ -232,8 +233,12 @@ function D.Page:onCloseWidget()
     if self._status_task then UIManager:unschedule(self._status_task); self._status_task=nil end
     if self.opts.on_close then self.opts.on_close(self) end
     local action=self._pending_action
+    local restore_parent=self._restore_parent
     UIManager:nextTick(function()
-        UIManager:setDirty("all","full")
+        -- UIManager already dirties the exposed surface on close. Only an
+        -- explicit Back needs a forced clearing refresh; navigation and opening
+        -- a reader paint their destination and must not flash hidden pages.
+        if restore_parent then UIManager:setDirty("all","full") end
         if action then action() end
     end)
 end

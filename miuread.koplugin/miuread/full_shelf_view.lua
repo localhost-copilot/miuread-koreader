@@ -35,9 +35,11 @@ function Shelf:_change_page(delta)
     return true
 end
 function Shelf:_set_mode(mode)
+    if self.view_mode==mode then return true end
     self.view_mode=mode
     if self.opts.on_view_mode then self.opts.on_view_mode(mode) end
     self:updateItems()
+    return true
 end
 function Shelf:_book_row(book,w,h)
     local gap=math.floor(w*.028)

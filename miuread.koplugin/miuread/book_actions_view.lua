@@ -5,7 +5,9 @@ local Progress = require("miuread.shelf_progress")
 
 local BookPage = D.Page:extend{name="miuread_book_actions",page=1}
 function BookPage:_change_page(delta)
-    self.page=math.max(1,math.min(self.pages,self.page+delta))
+    local page=math.max(1,math.min(self.pages,self.page+delta))
+    if page==self.page then return true end
+    self.page=page
     return self:updateItems()
 end
 function BookPage:_run(action)
