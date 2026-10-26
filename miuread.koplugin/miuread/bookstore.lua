@@ -124,19 +124,55 @@ local function error_message(plugin,value,label)
     return plugin:_friendly_remote_error(tostring(value or "未知错误"),label)
 end
 
+local function desktop_enabled(plugin)
+    return type(plugin._home_desktop_options)=="function" and plugin:_home_enabled()
+end
+
+local function show_menu(plugin,title,rows,options)
+    options=options or {}
+    if not desktop_enabled(plugin) then return plugin:list(title,rows) end
+    close_view(plugin)
+    TransientGuard.close_all()
+    local s=state(plugin)
+    local opts=plugin:_home_desktop_options()
+    opts.title=title;opts.landing=options.landing;opts.on_refresh=options.on_refresh
+    opts.on_back=options.on_back
+    opts.on_search=function() plugin:search_dialog("搜索微信读书") end
+    opts.rows={}
+    for _,row in ipairs(rows) do
+        local entry=U.copy(row)
+        if row.sub_item_table_func then
+            entry.callback=function()
+                show_menu(plugin,row.text,row.sub_item_table_func(),{
+                    on_back=function() show_menu(plugin,title,rows,options) end,
+                })
+            end
+        end
+        opts.rows[#opts.rows+1]=entry
+    end
+    opts.on_close=function(view) if s.view==view then s.view=nil end end
+    s.view=require("miuread.bookstore_view").show(opts)
+    return s.view
+end
+
 function M.open(plugin)
     state(plugin)
     close_view(plugin)
     if plugin._shelf_view then plugin:_close_current_shelf() end
-    return plugin:list("微信读书 · 书城",{
+    local rows={
         {text="为你推荐",post_text="根据阅读记录发现可能喜欢的书",callback=function()
             if plugin:require_login() then M.browse(plugin,{kind="recommend",title="为你推荐"}) end
         end},
-        {text="排行榜",post_text="总榜 · 飙升 · 新书 · 热门",callback=function() M.categories(plugin,true) end},
-        {text="分类浏览",post_text="按主题与子分类浏览",callback=function() M.categories(plugin,false) end},
-        {text="搜索微信读书",post_text="搜索全部图书",callback=function() plugin:search_dialog("搜索微信读书") end},
-        {text="微信书架",post_text="查看已加入的图书",callback=function() plugin:show_shelf(false,false,"account") end},
-    })
+        {text="排行榜",icon="library",post_text="总榜 · 飙升 · 新书 · 热门",callback=function() M.categories(plugin,true) end},
+        {text="分类浏览",icon="grid",post_text="按主题与子分类浏览",callback=function() M.categories(plugin,false) end},
+        {text="微信书架",icon="book",post_text="查看已加入的图书",callback=function()
+            if desktop_enabled(plugin) then plugin:_home_navigate("library")
+            else plugin:show_shelf(false,false,"account") end
+        end},
+    }
+    if not desktop_enabled(plugin) then table.insert(rows,4,{text="搜索微信读书",post_text="搜索全部图书",
+        callback=function() plugin:search_dialog("搜索微信读书") end}) end
+    return show_menu(plugin,desktop_enabled(plugin) and "书城" or "微信读书 · 书城",rows,{landing=true})
 end
 
 local function category_rows(plugin,entries)
@@ -165,10 +201,14 @@ function M.categories(plugin,rank,force)
     local function show(data,stale)
         local entries=rank and data.ranks or data.categories
         local rows=category_rows(plugin,entries or {})
-        table.insert(rows,1,{text="返回书城",callback=function() M.open(plugin) end})
-        rows[#rows+1]={text="刷新分类与榜单",callback=function() M.categories(plugin,rank,true) end}
-        if #entries==0 then table.insert(rows,2,{text="暂时没有可用分类",enabled=false}) end
-        plugin:list((rank and "排行榜" or "分类浏览")..(stale and " · 缓存" or ""),rows)
+        if not desktop_enabled(plugin) then
+            table.insert(rows,1,{text="返回书城",callback=function() M.open(plugin) end})
+            rows[#rows+1]={text="刷新分类与榜单",callback=function() M.categories(plugin,rank,true) end}
+        end
+        if #entries==0 then table.insert(rows,desktop_enabled(plugin) and 1 or 2,{text="暂时没有可用分类",enabled=false}) end
+        show_menu(plugin,(rank and "排行榜" or "分类浏览")..(stale and " · 缓存" or ""),rows,{
+            on_back=function() M.open(plugin) end,on_refresh=function() M.categories(plugin,rank,true) end,
+        })
     end
     local cached=s.cache.categories
     if cached and not force then show(U.copy(cached.value),os.time()-cached.at>Data.CACHE_TTL); return true end
@@ -199,6 +239,7 @@ local function show_page(plugin,s,spec,page,cached)
     local show_covers=not plugin._shelf_covers_enabled or plugin:_shelf_covers_enabled()
     local cover_index=plugin.store:get("cover_index",{})
     for _,book in ipairs(books) do
+        book.unified_source="weread"
         book.status_text=book_status(book)
         if spec.rank and book.searchIdx then book.display_title=tostring(book.searchIdx)..". "..book.title end
         if show_covers then book.cover_path=plugin.library:cached_cover_path(book.bookId,cover_index) end
@@ -219,28 +260,36 @@ local function show_page(plugin,s,spec,page,cached)
         M.browse(plugin,next_spec)
     end
     local function back() if spec.on_back then spec.on_back() else M.open(plugin) end end
+    local function reopen()
+        if spec.on_reopen then return spec.on_reopen() end
+        return M.browse(plugin,U.copy(spec))
+    end
+    local function refresh()
+        if spec.on_refresh then return spec.on_refresh() end
+        return M.browse(plugin,U.copy(spec),true)
+    end
     local function select(book)
         close_view(plugin)
-        plugin:book_menu(book,function() M.browse(plugin,U.copy(spec)) end)
+        plugin:book_menu(book,reopen,desktop_enabled(plugin) and "bookstore" or nil)
     end
-    if #books==0 then
+    if #books==0 and not desktop_enabled(plugin) then
         plugin:list(title,{
             {text="这一页暂无书籍",enabled=false},
             {text="返回",callback=back},
             {text="上一页",callback=previous},
-            {text="刷新",callback=function() M.browse(plugin,U.copy(spec),true) end},
+            {text="刷新",callback=refresh},
         })
         return
     end
     if plugin._shelf_view then plugin:_close_current_shelf() end
-    s.view=ShelfView.show{
+    local opts={
         title=title,books=books,show_covers=show_covers,selected_tab="",
         tabs={{id="back",label="返回",callback=back},
             {id="previous",label="上一页",callback=previous},
             {id="next",label=page.has_more and "下一页" or "已到底",callback=next_page}},
         left_action_label="搜索微信读书",right_action_label="刷新",
         on_search=function() close_view(plugin); plugin:search_dialog("搜索微信读书") end,
-        on_refresh=function() M.browse(plugin,U.copy(spec),true) end,
+        on_refresh=refresh,
         on_select=select,on_hold=select,
         on_page_changed=function(view_page,first,last,view)
             -- Never use the legacy foreground network fallback for covers.
@@ -257,6 +306,29 @@ local function show_page(plugin,s,spec,page,cached)
             end
         end,
     }
+    if desktop_enabled(plugin) then
+        for key,value in pairs(plugin:_home_desktop_options()) do opts[key]=value end
+        opts.title=spec.title;opts.dock_section="bookstore";opts.discovery=true
+        opts.show_actions=true;opts.on_left_action=opts.on_search
+        opts.on_right_action=refresh;opts.right_action_icon="refresh";opts.on_back=back
+        opts.search_label="搜索微信读书 · 书名、作者";opts.empty_text="这一页暂无书籍"
+        opts.browse_actions={
+            {label="上一批",enabled=spec.previous~=nil,callback=previous},
+            {label="第 "..tostring(spec.page or 1).." 批"..(cached and " · 缓存" or ""),enabled=false},
+            {label=page.has_more and "下一批" or "已到底",enabled=page.has_more,callback=next_page},
+        }
+        opts.view_mode=s.view_mode or "list"
+        opts.on_view_mode=function(mode) s.view_mode=mode end
+        s.view=require("miuread.full_shelf_view").show(opts)
+    else s.view=ShelfView.show(opts) end
+end
+
+function M.search_results(plugin,query,books)
+    local s=state(plugin)
+    local spec={kind="search",title="搜索 · "..query,page=1,
+        on_refresh=function() plugin:search(query) end,
+        on_reopen=function() M.search_results(plugin,query,books) end}
+    show_page(plugin,s,spec,{books=books,has_more=false},false)
 end
 
 function M.browse(plugin,spec,force)
@@ -330,6 +402,7 @@ function M.shelf_action(plugin,book)
     local _,_,entry=pending(plugin,id)
     local present=known_membership(plugin,id)
     return {text=entry and "确认微信书架状态" or (present and "从微信书架移除" or "加入微信书架"),
+        danger=not entry and present==true,
         callback=function()
             if present then M.remove_from_shelf(plugin,book) else M.add_to_shelf(plugin,book) end
         end}

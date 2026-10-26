@@ -664,4 +664,92 @@ assert(cancelled==3 and completed==0,'superseded worker reached its callback')
 worker_plugin.active=nil; new_job.callback({ok=true})
 worker_plugin:_cancel_interactive_network('after completion')
 assert(cancelled==3 and completed==1,'completed worker retained its cancellation hook')
-print('bookstore UI navigation and shelf recovery: PASS')
+-- Desktop routes use the same real controller/caches as the legacy menus.
+local desktop_views={}
+local function desktop_view(opts)
+    local view={opts=opts,page=opts.page or 1}
+    desktop_views[#desktop_views+1]=view
+    require('ui/uimanager'):show(view)
+    return view
+end
+package.preload['miuread.bookstore_view']=function() return {show=desktop_view} end
+package.preload['miuread.full_shelf_view']=function() return {show=desktop_view} end
+p=plugin()
+function p:_home_desktop_options() return {on_navigate=function(destination) self.destination=destination end} end
+function p:_home_navigate(destination) self.destination=destination end
+function p:search_dialog() self.searched=true end
+function p:search(query) self.search_query=query end
+local root=M.open(p)
+assert(root.opts.landing and #root.opts.rows==4 and not p.job,'opening the desktop bookstore fetched network data')
+root.opts.on_search();assert(p.searched)
+root.opts.rows[4].callback();assert(p.destination=='library')
+root.opts.rows[3].callback();assert(root._miu_closed and p.job)
+p:finish()
+local categories=p._bookstore.view
+assert(categories.opts.on_back and categories.opts.on_refresh and #categories.opts.rows==1)
+categories.opts.rows[1].callback()
+local children=p._bookstore.view
+assert(categories._miu_closed and children.opts.rows[1].text=='全部 · Computing')
+children.opts.on_back();assert(p._bookstore.view.opts.title=='分类浏览')
+p._bookstore.view.opts.rows[1].callback()
+p._bookstore.view.opts.rows[2].callback();assert(p.job)
+p:finish()
+local results=p._bookstore.view
+assert(results.opts.dock_section=='bookstore' and results.opts.discovery and results.opts.on_back)
+assert(results.opts.books[1].unified_source=='weread','discovery book was mislabeled as a local book')
+assert(results.opts.browse_actions[1].enabled==false and results.opts.browse_actions[3].enabled)
+results.opts.on_view_mode('grid')
+results.opts.browse_actions[3].callback();p:finish()
+results=p._bookstore.view
+assert(results.opts.view_mode=='grid' and results.opts.browse_actions[1].enabled)
+results.opts.on_select(results.opts.books[1]);assert(results._miu_closed and p.book.back)
+p.book.back();assert(p._bookstore.view and not p.job,'returning to cached results refetched the server')
+local search_books={{bookId='search',title='Result',author='Author'}}
+M.search_results(p,'query',search_books)
+results=p._bookstore.view
+assert(results.opts.books[1].bookId=='search' and not results.opts.browse_actions[3].enabled)
+results.opts.on_select(results.opts.books[1]);p.book.back()
+assert(p._bookstore.view.opts.books[1].bookId=='search' and not p.job)
+p._bookstore.view.opts.on_right_action();assert(p.search_query=='query')
+M.search_results(p,'empty',{})
+assert(#p._bookstore.view.opts.books==0 and p._bookstore.view.opts.on_back,
+    'empty search lost the desktop navigation')
+-- The prominent action must read/download, never add or remove a shelf item.
+local menu_method=assert(source:match('function Plugin:book_menu%(b,back_callback,desktop_section%).-\nend'))
+local menu_methods=assert(loadstring([[
+local Plugin={}
+local U=require('miuread.util')
+local function normalize(book) return U.copy(book) end
+local Protocol={is_mp_account=function() return false end,is_mp=function() return false end}
+]]..menu_method..'\nreturn Plugin'))()
+p=plugin()
+p.book_menu=menu_methods.book_menu
+p.book_delete_service={summary=function() return {has_local=false} end}
+function p:_variant_exists(_,kind) return self.local_variant and kind=='clean' and {file='local.epub'} or nil end
+function p:_has_range_variant() return true end
+function p:_finished_status_action() end
+function p:range_extend_menu() return {{text='extend'}} end
+function p:_show_home_book_actions(_,opts) self.sheet=opts end
+function p:open_file(file) self.opened=file end
+function p:choose_download(book) self.downloaded=book.bookId end
+local returned=false
+local function return_to_results() returned=true end
+for _,available in ipairs({false,true}) do
+    p.local_variant=available
+    p:book_menu({bookId='menu-test',title='Title'},return_to_results,'bookstore')
+    assert(p.sheet.on_back==return_to_results and p.sheet.dock_section=='bookstore')
+    local primary_count=0
+    for _,action in ipairs(p.sheet.actions) do
+        if action.primary then
+            primary_count=primary_count+1
+            assert(action.desktop_label==action.label,'primary action lost its actual operation label')
+            action.callback()
+        elseif action.label=='扩展已有章节版' then
+            action.callback();assert(p.menu.rows[1].text=='extend')
+        end
+    end
+    assert(primary_count==1)
+    if available then assert(p.opened=='local.epub') else assert(p.downloaded=='menu-test') end
+    p.sheet.on_back();assert(returned)
+end
+print('bookstore UI navigation, desktop routes and shelf recovery: PASS')

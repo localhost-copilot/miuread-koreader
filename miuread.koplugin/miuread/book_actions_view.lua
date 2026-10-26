@@ -17,8 +17,9 @@ function BookPage:_run(action)
     if action.primary then return self:_close(action.callback) end
     if action.callback then action.callback() end
 end
+function BookPage:onBack() return self:_close(self.opts.on_back) end
 function BookPage:_build()
-    local layer,m=self:_begin("library")
+    local layer,m=self:_begin(self.opts.dock_section or "library")
     local book=self.opts.book or {}
     local primary,danger
     local rows={}
@@ -32,7 +33,7 @@ function BookPage:_build()
     self.page=math.max(1,math.min(self.pages,self.page))
     local x,y,w=m.margin,m.body_y,m.width
     local back_w=math.floor(m.title_h*.7)
-    self._back_target=D.tap(back_w,m.title_h,D.icon("back",back_w,m.title_h,math.floor(m.title_h*.38)),function() self:_close() end)
+    self._back_target=D.tap(back_w,m.title_h,D.icon("back",back_w,m.title_h,math.floor(m.title_h*.38)),function() self:onBack() end)
     D.add(layer,x,y,self._back_target)
     D.add(layer,x+back_w,y,D.label("书籍操作",w-back_w,m.title_h,17,{bold=true}))
     y=y+m.title_h+m.gap

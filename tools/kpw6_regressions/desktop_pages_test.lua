@@ -16,6 +16,7 @@ local Scale=require("miuread.ui_scale")
 local Shelf=require("miuread.full_shelf_view")
 local Book=require("miuread.book_actions_view")
 local Tools=require("miuread.tools_view")
+local Store=require("miuread.bookstore_view")
 local Guard=require("miuread.transient_guard")
 local Screen=Device.screen
 local width,height=Screen.getWidth,Screen.getHeight
@@ -120,6 +121,30 @@ for _,dimensions in ipairs({{1236,1648},{1648,1236},{600,800},{800,600}}) do
         close(tools)
         local no_light=Tools.show{wifi_name="无线网络已关闭",wifi_status="已关闭",sync={icon="sync",label="同步"},downloads={icon="download",label="下载"},rows=rows}
         assert(not next(no_light._sliders)); regions(no_light,no_light._row_regions); render(no_light,"no-frontlight");close(no_light)
+        local store_rows={
+            {text="为你推荐",post_text="根据阅读记录发现可能喜欢的书",callback=action("recommend")},
+            {text="排行榜",post_text="总榜 · 飙升 · 新书 · 热门",callback=action("ranks")},
+            {text="分类浏览",post_text="按主题与子分类浏览",callback=action("categories")},
+            {text="微信书架",post_text="查看已加入的图书",callback=action("shelf")},
+        }
+        local store=Store.show{landing=true,title="书城",rows=store_rows,on_search=action("store-search")}
+        dock(store,"bookstore");regions(store,store._row_regions);render(store,"bookstore")
+        store._row_targets[1]:onTapSelect();store._search_target:onTapSelect()
+        assert(clicked.recommend==1 and clicked["store-search"]==1);close(store)
+        local category_rows={}
+        for index=1,19 do category_rows[index]={text="计算机与互联网 / 很长的分类名称 "..index,callback=action("category"..index)} end
+        store=Store.show{title="分类浏览",rows=category_rows,on_back=action("store-back"),on_refresh=action("store-refresh")}
+        dock(store,"bookstore");regions(store,store._row_regions);render(store,"store-categories")
+        store:_change_page(1);store:_change_page(1);store:_change_page(1)
+        assert(#store._row_targets==1 and store.page==4);store._row_targets[1]:onTapSelect();assert(clicked.category19==1)
+        unchanged=store[1];store:_change_page(1);assert(store[1]==unchanged)
+        store._back_target:onTapSelect();assert(store._miu_closed)
+        local discovery=Shelf.show{title="为你推荐",dock_section="bookstore",discovery=true,books=books,
+            show_actions=true,on_back=action("store-back"),on_right_action=action("store-refresh"),
+            browse_actions={{label="上一批",enabled=false},{label="第 1 批",enabled=false},{label="下一批",callback=action("next-batch")}}}
+        dock(discovery,"bookstore");regions(discovery,discovery._book_regions);render(discovery,"store-results")
+        discovery._browse_targets[3]:onTapSelect();assert(clicked["next-batch"]==1)
+        discovery.opts.books={};discovery:updateItems();render(discovery,"store-empty");close(discovery)
         cases=cases+1
     end
 end

@@ -9847,6 +9847,8 @@ function Plugin:_show_home_book_actions(book,options)
     local opts=self:_home_desktop_options()
     opts.book=book
     opts.actions=options.actions
+    opts.on_back=options.on_back
+    opts.dock_section=options.dock_section
     opts.source_label=self:_home_source_text(book)
     opts.availability_text=(book.local_available==true or book.file and U.file_exists(book.file)) and "本机已有内容" or "选择版本下载后阅读"
     opts.on_close=function(view) if self._home_book_action_view==view then self._home_book_action_view=nil end end
@@ -18388,17 +18390,19 @@ function Plugin:search(q)
             return
         end
         local data=result.value or {}
-        local items={}
+        local items,books={},{}
         local function add(r)
             local b=normalize(r)
             if b.bookId~="" then
+                books[#books+1]=b
                 items[#items+1]={text=b.title,post_text=b.author,callback=function() self:book_menu(b) end}
             end
         end
         for _,g in ipairs(data.results or data.books or {}) do
             if g.books then for _,r in ipairs(g.books) do add(r) end else add(g) end
         end
-        self:list(_("Search").." · "..q,items,"没有找到相关书籍")
+        if self:_home_enabled() then require("miuread.bookstore").search_results(self,q,books)
+        else self:list(_("Search").." · "..q,items,"没有找到相关书籍") end
     end
 
     local function run_on_main_thread()
@@ -18748,7 +18752,7 @@ function Plugin:_confirm_shelf_removal(book,callback)
     })
 end
 
-function Plugin:book_menu(b,back_callback)
+function Plugin:book_menu(b,back_callback,desktop_section)
     local original=type(b)=="table" and b or {}
     b=U.merge(original,normalize(original))
     if Protocol.is_mp_account(b.bookId) then self:mp_account(b); return end
@@ -18757,19 +18761,21 @@ function Plugin:book_menu(b,back_callback)
         local action=require("miuread.bookstore").shelf_action(self,b)
         if action then items[#items+1]=action end
         items[#items+1]={text="相似推荐",callback=function()
-            require("miuread.bookstore").similar(self,b,function() self:book_menu(b,back_callback) end)
+            require("miuread.bookstore").similar(self,b,function() self:book_menu(b,back_callback,desktop_section) end)
         end}
     end
     local records={{kind="clean",label="纯净版"},{kind="notes",label="划线与想法版"},
         {kind="range_clean",label="章节版 · 纯净版"},{kind="range_notes",label="章节版 · 划线与想法版"},
         {kind="preview_clean",label="试读版 · 纯净版"},{kind="preview_notes",label="试读版 · 划线与想法版"}}
+    local primary
     for _,entry in ipairs(records) do
         local record=self:_variant_exists(b.bookId,entry.kind)
         if record then
-            items[#items+1]={text="打开"..entry.label,callback=function() self:open_file(record.file) end}
+            items[#items+1]={text="打开"..entry.label,primary=not primary,callback=function() self:open_file(record.file) end}
+            primary=true
         end
     end
-    items[#items+1]={text="生成／更新书籍",callback=function() self:choose_download(b,nil,false) end}
+    items[#items+1]={text="生成／更新书籍",primary=not primary,callback=function() self:choose_download(b,nil,false) end}
     items[#items+1]={text="按章节下载",callback=function() self:chapters(b) end}
     if self:_has_range_variant(b.bookId) then
         items[#items+1]={text="扩展已有章节版",sub_item_table_func=function() return self:range_extend_menu(b) end}
@@ -18781,6 +18787,18 @@ function Plugin:book_menu(b,back_callback)
     items[#items+1]={text="书籍详情",callback=function() self:book_details(b) end}
     local finished_action=self:_finished_status_action(b)
     if finished_action then items[#items+1]=finished_action end
+    if self:_home_enabled() then
+        local actions={}
+        for _,item in ipairs(items) do
+            local current=item
+            actions[#actions+1]={label=current.text,desktop_label=current.text,detail=current.post_text,primary=current.primary,
+                enabled=current.enabled,danger=current.danger,icon=current.primary and "book" or "more",
+                callback=current.callback or (current.sub_item_table_func and function()
+                    self:list(current.text,current.sub_item_table_func())
+                end)}
+        end
+        return self:_show_home_book_actions(b,{actions=actions,on_back=back_callback,dock_section=desktop_section})
+    end
     if back_callback then items[#items+1]={text="返回列表",callback=back_callback} end
     self:list(b.title,items)
 end

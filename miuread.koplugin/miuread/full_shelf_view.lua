@@ -6,7 +6,8 @@ local Progress = require("miuread.shelf_progress")
 
 local Shelf = D.Page:extend{name="miuread_full_shelf",page=1,perpage=6,view_mode="list"}
 
-local function status(book)
+local function status(book,discovery)
+    if discovery and book.status_text and book.status_text~="" then return book.status_text end
     local parts={book.source_label or "微信读书"}
     if book.download_active then
         parts[#parts+1]="下载中 "..tostring(math.floor(tonumber(book.download_progress) or 0)).."%"
@@ -50,21 +51,23 @@ function Shelf:_book_row(book,w,h)
     local tw=w-tx-arrow_w
     local body=D.layer(w,h)
     if cover_w>0 then D.add(body,0,math.floor((h-cover_h)/2),D.cover(book,cover_w,cover_h)) end
-    D.add(body,tx,math.floor(h*.08),D.label(book.title or "未命名",tw,math.floor(h*.31),11.8,{bold=true}))
+    D.add(body,tx,math.floor(h*.08),D.label(self.opts.discovery and book.display_title or book.title or "未命名",tw,math.floor(h*.31),11.8,{bold=true}))
     D.add(body,tx,math.floor(h*.39),D.label(book.author,tw,math.floor(h*.25),9.3))
-    D.add(body,tx,math.floor(h*.64),D.label(status(book),tw,math.floor(h*.25),8.8))
+    D.add(body,tx,math.floor(h*.64),D.label(status(book,self.opts.discovery),tw,math.floor(h*.25),8.8))
     D.add(body,w-arrow_w,0,D.icon("chevron-right",arrow_w,h,math.floor(h*.22)))
     D.add(body,0,h-2,D.line(w,2,BB.COLOR_GRAY))
-    return D.tap(w,h,body,function(anchor,ges) if self.opts.on_select then self.opts.on_select(book,anchor,ges) end end)
+    return D.tap(w,h,body,function(anchor,ges) if self.opts.on_select then self.opts.on_select(book,anchor,ges) end end,
+        self.opts.on_hold and function(anchor) self.opts.on_hold(book,anchor) end)
 end
 function Shelf:_book_card(book,w,h)
     local body=D.layer(w,h)
     local cover_h=math.floor(h*.75)
     local cover_w=math.min(math.floor(w*.78),math.floor(cover_h*.68))
     D.add(body,math.floor((w-cover_w)/2),0,D.cover(book,cover_w,cover_h,self.opts.show_covers))
-    D.add(body,0,cover_h,D.label(book.title or "未命名",w,math.floor(h*.13),10.5,{bold=true,align="center"}))
-    D.add(body,0,math.floor(h*.88),D.label(status(book),w,math.floor(h*.12),8,{align="center"}))
-    return D.tap(w,h,body,function(anchor,ges) if self.opts.on_select then self.opts.on_select(book,anchor,ges) end end)
+    D.add(body,0,cover_h,D.label(self.opts.discovery and book.display_title or book.title or "未命名",w,math.floor(h*.13),10.5,{bold=true,align="center"}))
+    D.add(body,0,math.floor(h*.88),D.label(status(book,self.opts.discovery),w,math.floor(h*.12),8,{align="center"}))
+    return D.tap(w,h,body,function(anchor,ges) if self.opts.on_select then self.opts.on_select(book,anchor,ges) end end,
+        self.opts.on_hold and function(anchor) self.opts.on_hold(book,anchor) end)
 end
 function Shelf:_build()
     self.opts.books=self.opts.books or {}
@@ -72,15 +75,21 @@ function Shelf:_build()
     self.pages=math.max(1,math.ceil(#self.opts.books/self.perpage))
     self.view_mode=self.opts.view_mode or self.view_mode
     self.opts.view_mode=nil
-    local layer,m=self:_begin("library")
+    local layer,m=self:_begin(self.opts.dock_section or "library")
     local x,y,w=m.margin,m.body_y,m.width
+    local back_w=self.opts.on_back and math.floor(m.title_h*.7) or 0
+    if back_w>0 then
+        self._back_target=D.tap(back_w,m.title_h,D.icon("back",back_w,m.title_h,math.floor(m.title_h*.38)),function() self:onBack() end)
+        D.add(layer,x,y,self._back_target)
+    end
     local mode_w=math.floor(w*.09)
     local count_w=math.floor(w*.17)
-    local title=D.label(self.opts.title or "书架",w-mode_w*3-count_w-m.gap,m.title_h,20,{bold=true})
-    D.add(layer,x,y,title)
-    D.add(layer,x+title[1]:getSize().w+m.gap,y,D.label(tostring(#self.opts.books).." 本",count_w,m.title_h,10.5))
+    local title=D.label(self.opts.title or "书架",w-back_w-mode_w*3-count_w-m.gap,m.title_h,20,{bold=true})
+    D.add(layer,x+back_w,y,title)
+    D.add(layer,x+back_w+title[1]:getSize().w+m.gap,y,D.label(tostring(#self.opts.books).." 本",count_w,m.title_h,10.5))
     if self.opts.on_right_action then
-        D.add(layer,x+w-mode_w*3,y,D.tap(mode_w,m.title_h,D.icon("more",mode_w,m.title_h,math.floor(m.title_h*.4)),self.opts.on_right_action))
+        self._right_action_target=D.tap(mode_w,m.title_h,D.icon(self.opts.right_action_icon or "more",mode_w,m.title_h,math.floor(m.title_h*.4)),self.opts.on_right_action)
+        D.add(layer,x+w-mode_w*3,y,self._right_action_target)
     end
     D.add(layer,x+w-mode_w*2,y,D.tap(mode_w,m.title_h,D.icon("menu",mode_w,m.title_h,math.floor(m.title_h*.4)),function() self:_set_mode("list") end))
     D.add(layer,x+w-mode_w,y,D.tap(mode_w,m.title_h,D.icon("grid",mode_w,m.title_h,math.floor(m.title_h*.4)),function() self:_set_mode("grid") end))
@@ -92,26 +101,38 @@ function Shelf:_build()
         local search=D.layer(w,search_h)
         local icon_w=search_h
         D.add(search,0,0,D.icon("search",icon_w,search_h,math.floor(search_h*.4)))
-        D.add(search,icon_w,0,D.label("搜索书名、作者",w-icon_w,search_h,10))
+        D.add(search,icon_w,0,D.label(self.opts.search_label or "搜索书名、作者",w-icon_w,search_h,10))
         self._search_target=D.tap(w,search_h,D.frame(w,search_h,search,{border=m.line,radius=m.gap/2}),self.opts.on_left_action)
         D.add(layer,x,y,self._search_target)
         y=y+search_h+m.gap
         local filter_h=math.floor(m.short*.052)
-        D.add(layer,x,y,D.tap(math.floor(w/2),filter_h,D.label((self.opts.source_label or "全部来源").." ▾",math.floor(w/2),filter_h,10),self.opts.on_source or self.opts.on_right_action))
-        D.add(layer,x+math.floor(w/2),y,D.tap(math.ceil(w/2),filter_h,D.label((self.opts.sort_label or "最近阅读").." ▾",math.ceil(w/2),filter_h,10,{align="right"}),self.opts.on_sort or self.opts.on_right_action))
-        y=y+filter_h
-        local tabs=self.opts.status_tabs or {}
-        self._status_targets={}
-        for index,tab in ipairs(tabs) do
-            local tw=math.floor(w/#tabs)
-            local body=D.layer(tw,filter_h)
-            D.add(body,0,0,D.label(tab.label,tw,filter_h,10,{bold=tab.selected,align="center"}))
-            if tab.selected then D.add(body,0,filter_h-m.line*2,D.line(tw,m.line*2)) end
-            self._status_targets[index]=D.tap(tw,filter_h,body,tab.callback)
-            D.add(layer,x+(index-1)*tw,y,self._status_targets[index])
+        if self.opts.browse_actions then
+            self._browse_targets={}
+            local actions=self.opts.browse_actions
+            for index,action in ipairs(actions) do
+                local aw=math.floor(w/#actions)
+                self._browse_targets[index]=D.tap(aw,filter_h,D.label(action.label,aw,filter_h,9.5,
+                    {align="center",color=action.enabled==false and BB.COLOR_GRAY or nil}),action.enabled~=false and action.callback or nil)
+                D.add(layer,x+(index-1)*aw,y,self._browse_targets[index])
+            end
+            y=y+filter_h+m.gap
+        else
+            D.add(layer,x,y,D.tap(math.floor(w/2),filter_h,D.label((self.opts.source_label or "全部来源").." ▾",math.floor(w/2),filter_h,10),self.opts.on_source or self.opts.on_right_action))
+            D.add(layer,x+math.floor(w/2),y,D.tap(math.ceil(w/2),filter_h,D.label((self.opts.sort_label or "最近阅读").." ▾",math.ceil(w/2),filter_h,10,{align="right"}),self.opts.on_sort or self.opts.on_right_action))
+            y=y+filter_h
+            local tabs=self.opts.status_tabs or {}
+            self._status_targets={}
+            for index,tab in ipairs(tabs) do
+                local tw=math.floor(w/#tabs)
+                local body=D.layer(tw,filter_h)
+                D.add(body,0,0,D.label(tab.label,tw,filter_h,10,{bold=tab.selected,align="center"}))
+                if tab.selected then D.add(body,0,filter_h-m.line*2,D.line(tw,m.line*2)) end
+                self._status_targets[index]=D.tap(tw,filter_h,body,tab.callback)
+                D.add(layer,x+(index-1)*tw,y,self._status_targets[index])
+            end
+            if #tabs>0 then y=y+filter_h end
+            y=y+m.gap
         end
-        if #tabs>0 then y=y+filter_h end
-        y=y+m.gap
     end
     local footer_h=math.floor(m.short*.036)
     local bottom=m.nav_y-m.gap-footer_h
@@ -139,11 +160,12 @@ function Shelf:_build()
         D.add(layer,bx,by,card)
     end
     if #self.opts.books==0 then
-        D.add(layer,x,y,D.label("没有符合条件的书籍",w,available,11,{align="center"}))
+        D.add(layer,x,y,D.label(self.opts.empty_text or "没有符合条件的书籍",w,available,11,{align="center"}))
     end
     D.pager(layer,x,bottom,w,footer_h,self.page,self.pages,function(delta) self:_change_page(delta) end)
     self:_finish(layer)
 end
+function Shelf:onBack() return self:_close(self.opts.on_back) end
 function Shelf:onShow()
     D.Page.onShow(self)
     self:_notify_page()
