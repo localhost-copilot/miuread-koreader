@@ -192,3 +192,64 @@ table.remove(cover_tasks,1)();assert(calls.narrow==1,"Stale cover batch updated 
 cover_plugin:_schedule_shelf_cover_refresh({updateItems=function() calls.legacy=calls.legacy+1 end},2)
 table.remove(cover_tasks,1)();assert(calls.legacy==1)
 print("Cover batches: bounded desktop update, coalescing, stale generation and legacy fallback PASS")
+
+-- Exercise the shared child-page event boundary, including slow pulls whose
+-- release position has already left the header and queued navigation races.
+local desktop_file=assert(io.open("miuread.koplugin/miuread/desktop_ui.lua","rb"))
+local desktop_source=desktop_file:read("*a"); desktop_file:close()
+local function page_method(name)
+    return assert(desktop_source:match("function D.Page:"..name.."%b().-\nend"),name)
+end
+local pull_queue,pull_stack={},{}
+local forwarded={}
+local pull_ui={_window_stack=pull_stack,nextTick=function(_,callback) pull_queue[#pull_queue+1]=callback end}
+local input={handleEvent=function(_,event) forwarded[#forwarded+1]=event;return "child handled" end}
+local Page=assert(loadstring([[
+local UIManager,Input=...
+local D={Page={}}
+]]..page_method("isTopPage").."\n"..page_method("_open_quick_panel_from_gesture").."\n"
+    ..page_method("handleEvent").."\nreturn D.Page"))(pull_ui,input)
+local opened=0
+local view=setmetatable({opts={on_device=function() opened=opened+1 end},
+    _top_swipe_dimen={contains=function(_,p) return p.x>=0 and p.x<1236 and p.y>=0 and p.y<167 end}},
+    {__index=Page})
+pull_stack[1]={widget=view}
+local function gesture(kind,direction,start,pos)
+    return {handler="onGesture",args={{ges=kind,direction=direction,start_pos=start,pos=pos or start}}}
+end
+local function drain_pulls()
+    while #pull_queue>0 do table.remove(pull_queue,1)() end
+end
+local top={x=600,y=30}
+local body={x=600,y=600}
+assert(view:handleEvent(gesture("swipe","south",top))==true)
+assert(opened==0 and #forwarded==0,"A pull must finish dispatch before opening controls")
+assert(view:handleEvent(gesture("pan_release","south",top,body))==true)
+assert(#pull_queue==1,"A swipe and its release must not open duplicate panels")
+drain_pulls();assert(opened==1)
+assert(view:handleEvent(gesture("pan_release","south",top,body))==true)
+drain_pulls();assert(opened==2,"Slow pulls must use their starting position")
+assert(view:handleEvent(gesture("swipe","south",nil,top))==true)
+pull_stack[2]={widget={toast=true}};drain_pulls();assert(opened==3,"Toasts must not block a header pull")
+pull_stack[2]=nil
+for _,event in ipairs({gesture("swipe","west",top),gesture("swipe","east",body),
+    gesture("swipe","north",top),gesture("swipe","south",body),
+    gesture("pan","south",top),gesture("tap",nil,top),gesture("hold",nil,top),
+    gesture("pan_release","south",{x=-1,y=30}),gesture("swipe","south",{x=1236,y=30}),
+    gesture("swipe","south",{x=600,y=167}),{handler="onGesture",args={}},
+    {handler="onBack"}}) do
+    assert(view:handleEvent(event)=="child handled","Unowned input must retain normal dispatch")
+end
+assert(#pull_queue==0 and opened==3)
+assert(view:handleEvent(gesture("swipe","south",top))==true)
+pull_stack[2]={widget={name="confirmation"}}
+drain_pulls();assert(opened==3,"A pending pull may not cover a newly opened modal")
+assert(view:handleEvent(gesture("swipe","south",top))=="child handled")
+pull_stack[2]=nil
+assert(view:handleEvent(gesture("swipe","south",top))==true)
+view._miu_closed=true;drain_pulls();assert(opened==3,"Closing a page must discard its pending pull")
+view._miu_closed=false
+view.opts.on_device=nil
+assert(view:handleEvent(gesture("swipe","south",top))=="child handled")
+assert(#pull_queue==0)
+print("Desktop gestures: header swipe/slow pull, coalescing, input routing and modal/navigation races PASS")

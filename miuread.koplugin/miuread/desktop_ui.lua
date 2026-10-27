@@ -175,6 +175,8 @@ function D.Page:_begin(selected)
     local m=D.metrics()
     self._metrics_cache=m
     self.dimen=Geom:new{x=0,y=0,w=m.sw,h=m.sh}
+    local top_h=math.min(math.floor(m.sh*.14),math.max(m.body_y+m.title_h,math.floor(m.sh*.10)))
+    self._top_swipe_dimen=Geom:new{x=0,y=0,w=m.sw,h=top_h}
     self.ges_events={PageSwipe={GestureRange:new{ges="swipe",range=self.dimen}}}
     local layer=D.layer(m.sw,m.sh)
     D.add(layer,0,0,D.frame(m.sw,m.sh))
@@ -201,6 +203,26 @@ function D.Page:_close(action)
     return true
 end
 function D.Page:onBack() return self:_close() end
+function D.Page:_open_quick_panel_from_gesture(ges)
+    if not ges or (ges.ges~="swipe" and ges.ges~="pan_release") or ges.direction~="south" then return false end
+    local start=ges.start_pos or ges.pos
+    if not start or not self._top_swipe_dimen or not self._top_swipe_dimen:contains(start)
+        or not self.opts.on_device or not self:isTopPage() then return false end
+    if self._quick_panel_pending then return true end
+    self._quick_panel_pending=true
+    -- Finish dispatch before showing controls, and discard a queued pull if
+    -- navigation or a modal has since covered the originating page.
+    UIManager:nextTick(function()
+        self._quick_panel_pending=false
+        if self:isTopPage() then self.opts.on_device() end
+    end)
+    return true
+end
+function D.Page:handleEvent(event)
+    if event and event.handler=="onGesture"
+        and self:_open_quick_panel_from_gesture(event.args and event.args[1]) then return true end
+    return Input.handleEvent(self,event)
+end
 function D.Page:onPageSwipe(_,ges)
     if not self._change_page then return false end
     if ges.direction=="west" then return self:_change_page(1) end
